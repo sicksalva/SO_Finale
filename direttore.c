@@ -15,12 +15,10 @@
 #include <errno.h>
 #include <sys/wait.h>
 
-// Service names array is defined in config.h
-
-// Global variables for shared memory and semaphores
+// Variabili globali per la memoria condivisa e i semafori
 int shmid = -1;
 int semid = -1;
-SharedMemory *shared_memory = NULL; // Also make the pointer global if needed in handler
+SharedMemory *shared_memory = NULL;
 volatile sig_atomic_t alarm_triggered = 0; // Flag per l'alarm handler
 
 // Handler per SIGALRM
@@ -28,14 +26,11 @@ void alarm_handler(int signum __attribute__((unused))) {
     alarm_triggered = 1;
 }
 
-// Nessuna funzione di assegnazione degli operatori - sono loro stessi a trovarsi uno sportello
-
-// Signal handler for cleanup
-void cleanup_handler(int signum) {
-    printf("\nCaught signal %d. Cleaning up...\n", signum);
-
-    // 1. Terminate all processes
+// Handler per la pulizia in caso di segnali di terminazione
+void cleanup_handler(int signum __attribute__((unused))) {
+    // 1. Termina tutti i processi figli
     if (shared_memory != NULL && shared_memory != (void *)-1) {
+
         // Termina ticket process
         if (shared_memory->ticket_pid > 0) {
             kill(shared_memory->ticket_pid, SIGTERM);
@@ -54,22 +49,21 @@ void cleanup_handler(int signum) {
                 kill(shared_memory->operator_pids[i], SIGTERM);
             }
         }
-        
         // Breve attesa per permettere ai processi di terminare
         sleep(1);
     }
     
-    // 2. Clean up message queue
+    // 2. Pulisci la coda di messaggi
     int msgid = msgget(MSG_QUEUE_KEY, 0666);
     if (msgid != -1) {
         if (msgctl(msgid, IPC_RMID, NULL) == -1) {
             perror("Failed to remove message queue");
         } else {
-            printf("Message queue removed successfully\n");
+            //printf("Message queue removed successfully\n");
         }
     }
     
-    // 3. Clean up shared memory
+    // 3. Pulisci la memoria condivisa
     if (shared_memory != NULL && shared_memory != (void *)-1) {
         shmdt(shared_memory);
         shared_memory = NULL;
@@ -80,37 +74,17 @@ void cleanup_handler(int signum) {
         shmid = -1;
     }
     
-    // 4. Clean up semaphores
+    // 4. Pulisci i semafori
     if (semid != -1) {
         semctl(semid, 0, IPC_RMID);
         semid = -1;
     }
     
-    printf("Cleanup completed. Exiting.\n");
+    // 5. Esci dal programma
     exit(EXIT_SUCCESS);
 }
 
-void cleanup_all_resources() {
-    // Clean up message queues
-    int msgid = msgget(MSG_QUEUE_KEY, 0666);
-    if (msgid != -1) {
-        msgctl(msgid, IPC_RMID, NULL);
-    }
 
-    // Clean up semaphores
-    if (semid != -1) {
-        semctl(semid, 0, IPC_RMID);
-    }
-
-    // Clean up shared memory
-    if (shared_memory != NULL && shared_memory != (void *)-1) {
-        shmdt(shared_memory);
-        int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
-        if (shmid != -1) {
-            shmctl(shmid, IPC_RMID, NULL);
-        }
-    }
-}
 
 void handle_timeout(int signum __attribute__((unused))) {
     printf("Simulation timeout reached. Cleaning up...\n");
@@ -122,9 +96,8 @@ void handle_timeout(int signum __attribute__((unused))) {
         }
     }
     
-    // Clean up resources
-    cleanup_all_resources();
-    exit(EXIT_SUCCESS);
+    // Clean up resources using the existing cleanup handler
+    cleanup_handler(0); // Pass 0 as dummy signum
 }
 
 void create_users(SharedMemory *shm_ptr)
@@ -1189,7 +1162,7 @@ int main()
     }
     
     printf("Simulation complete. Cleaning up resources...\n");
-    cleanup_all_resources();
+    cleanup_handler(0); // Use existing cleanup handler instead of separate function
     printf("Director finished normally.\n");
     return 0;
 }
