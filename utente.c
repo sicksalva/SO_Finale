@@ -14,6 +14,7 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/wait.h>
+#include <stdbool.h>
 
 // Global variables
 int user_id;
@@ -336,6 +337,33 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
     return -1;
 }
 
+// Funzione per verificare se un servizio è realmente disponibile
+bool is_service_available(SharedMemory *shm, int service_id) {
+    // Controlla se c'è almeno uno sportello attivo per il servizio richiesto
+    bool counter_available = false;
+    for (int i = 0; i < NOF_WORKER_SEATS; i++) {
+        if (shm->counters[i].active && shm->counters[i].current_service == (ServiceType)service_id) {
+            counter_available = true;
+            break;
+        }
+    }
+
+    if (!counter_available) {
+        return false; // Nessuno sportello per questo servizio
+    }
+
+    // Controlla se c'è almeno un operatore disponibile per quel servizio
+    for (int i = 0; i < NOF_WORKERS; i++) {
+        // Un operatore è disponibile se è attivo e o serve quel servizio o è in attesa di un utente
+        if (shm->operators[i].active && 
+            (shm->operators[i].current_service == (ServiceType)service_id || shm->operators[i].status == OPERATOR_WAITING)) {
+            return true; // Trovato un operatore disponibile
+        }
+    }
+
+    return false; // Nessun operatore disponibile per questo servizio
+}
+
 int main(int argc, char *argv[])
 {
     // Get user ID from argument (passed by director)
@@ -468,29 +496,26 @@ int main(int argc, char *argv[])
             // If it's time to arrive at the post office
             if (elapsed_seconds >= arrival_seconds)
             {
-                // Verifica se il servizio è disponibile in almeno uno sportello attivo
-                int service_available = 0;
-                for (int i = 0; i < NOF_WORKER_SEATS; i++)
-                {
-                    if (shm_ptr->counters[i].active &&
-                        (int)shm_ptr->counters[i].current_service == service_id)
-                    {
-                        service_available = 1;
-                        break;
-                    }
-                }
-
-                if (!service_available)
+                // Controlla se il servizio è realmente disponibile (sportello E operatore)
+                if (!is_service_available(shm_ptr, service_id))
                 {
                     // Incrementa il contatore degli utenti tornati a casa
-                    // perché il servizio non era disponibile (nessun operatore offre quel servizio)
-                    shm_ptr->daily_users_home[service_id]++;
-                    shm_ptr->total_users_home++;
+                    // perché il servizio non era disponibile (es. nessuno sportello o nessun operatore)
+                    struct sembuf sem_op;
+                    sem_op.sem_num = SEM_MUTEX;
+                    sem_op.sem_op = -1; // Lock
+                    sem_op.sem_flg = 0;
+                    
+                    if (semop(semid, &sem_op, 1) == 0) {
+                        shm_ptr->daily_users_home[service_id]++;
+                        shm_ptr->total_users_home++;
+                        
+                        // Rilascia il mutex
+                        sem_op.sem_op = 1; // Unlock
+                        semop(semid, &sem_op, 1);
+                    }
 
                     visited = 1; // Segna come "visitato" anche se non ha ottenuto servizio
-                    // L'utente non ha trovato servizio disponibile
-                    //printf("\t\t\t\t\t[UTENTE %d] Non ha trovato servizio disponibile per il servizio %s \n",
-                    //       user_id, SERVICE_NAMES[service_id]);
                 }
                 else
                 {
