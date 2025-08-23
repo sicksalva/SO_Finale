@@ -45,22 +45,21 @@
 #define SEM_COUNTERS 4      // Accesso agli sportelli
 #define SEM_SYNC 5          // Sincronizzazione generica
 #define SEM_DAY_START 6     // Sincronizzazione inizio giorno
-#define SEM_DAY_END 7       // Sincronizzazione fine giorno
-#define SEM_TICKET_WAIT 8   // Sincronizzazione attesa ticket
+#define SEM_TICKET_WAIT 7   // Sincronizzazione attesa ticket
 
 // Semafori separati per ogni servizio (molto più efficiente!)
-#define SEM_SERVICE_LOCK_BASE 9  // Base per i semafori dei servizi
-#define SEM_SERVICE_LOCK_PACKAGES (SEM_SERVICE_LOCK_BASE + PACKAGES)      // 9
-#define SEM_SERVICE_LOCK_LETTERS (SEM_SERVICE_LOCK_BASE + LETTERS)        // 10
-#define SEM_SERVICE_LOCK_BANCOPOST (SEM_SERVICE_LOCK_BASE + BANCOPOST)    // 11
-#define SEM_SERVICE_LOCK_BILLS (SEM_SERVICE_LOCK_BASE + BILLS)            // 12
-#define SEM_SERVICE_LOCK_FINANCIAL (SEM_SERVICE_LOCK_BASE + FINANCIAL)    // 13
-#define SEM_SERVICE_LOCK_WATCHES (SEM_SERVICE_LOCK_BASE + WATCHES)        // 14
+#define SEM_SERVICE_LOCK_BASE 8  // Base per i semafori dei servizi
+#define SEM_SERVICE_LOCK_PACKAGES (SEM_SERVICE_LOCK_BASE + PACKAGES)      // 8
+#define SEM_SERVICE_LOCK_LETTERS (SEM_SERVICE_LOCK_BASE + LETTERS)        // 9
+#define SEM_SERVICE_LOCK_BANCOPOST (SEM_SERVICE_LOCK_BASE + BANCOPOST)    // 10
+#define SEM_SERVICE_LOCK_BILLS (SEM_SERVICE_LOCK_BASE + BILLS)            // 11
+#define SEM_SERVICE_LOCK_FINANCIAL (SEM_SERVICE_LOCK_BASE + FINANCIAL)    // 12
+#define SEM_SERVICE_LOCK_WATCHES (SEM_SERVICE_LOCK_BASE + WATCHES)        // 13
 
 // Macro per calcolare il semaforo specifico di un servizio
 #define SEM_SERVICE_LOCK(service) (SEM_SERVICE_LOCK_BASE + (service))
 
-#define NUM_SEMS (SEM_SERVICE_LOCK_BASE + SERVICE_COUNT)  // 15 semafori totali
+#define NUM_SEMS (SEM_SERVICE_LOCK_BASE + SERVICE_COUNT)  // 14 semafori totali
 
 // Dimensione massima della coda delle richieste di ticket
 #define MAX_REQUESTS 5000

@@ -840,6 +840,68 @@ void initialize_semaphores(int semid, int shmid, SharedMemory *shm) {
     }
 }
 
+// Funzione per resettare lo stato giornaliero
+void reset_daily_state(SharedMemory *shm, int semid) {
+    // Resetta i contatori giornalieri
+    memset(shm->daily_tickets_served, 0, sizeof(int) * SERVICE_COUNT);
+    memset(shm->daily_users_home, 0, sizeof(int) * SERVICE_COUNT);
+    memset(shm->daily_users_timeout, 0, sizeof(int) * SERVICE_COUNT);
+    memset(shm->daily_users_no_ticket, 0, sizeof(int) * SERVICE_COUNT);
+    shm->total_tickets_served = 0;
+    shm->total_users_home = 0;
+    shm->total_users_timeout = 0;
+    shm->total_users_no_ticket = 0;
+    
+    // Resetta le statistiche sui tempi di attesa
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        shm->min_wait_time[i] = LONG_MAX; // Valore massimo possibile
+        shm->max_wait_time[i] = 0;
+        shm->total_wait_time[i] = 0;
+        shm->wait_count[i] = 0;
+        
+        // Resetta anche le statistiche giornaliere sui tempi di attesa
+        shm->daily_total_wait_time[i] = 0;
+        shm->daily_wait_count[i] = 0;
+        
+        // Resetta anche le statistiche sui tempi di servizio
+        shm->min_service_time[i] = LONG_MAX;
+        shm->max_service_time[i] = 0;
+        shm->total_service_time[i] = 0;
+        shm->service_count[i] = 0;
+        
+        // Azzera anche i contatori giornalieri
+        shm->daily_users_timeout[i] = 0;
+    }
+    shm->total_users_timeout = 0;
+    
+    // Resetta anche le statistiche aggregate sui tempi di attesa
+    shm->daily_total_wait_time_all = 0;
+    shm->daily_wait_count_all = 0;
+    
+    // Reset anche del next_request_index per il giorno successivo
+    shm->next_request_index = 0;
+
+    // Reset the day start semaphore for the next day
+    struct sembuf reset_day_start;
+    reset_day_start.sem_num = SEM_DAY_START;
+    reset_day_start.sem_op = -semctl(semid, SEM_DAY_START, GETVAL);  // Reset to 0
+    reset_day_start.sem_flg = 0;
+    if (semop(semid, &reset_day_start, 1) < 0)
+    {
+        perror("Failed to reset day start semaphore");
+    }
+    
+    // Reset the ticket ready semaphore for the next day
+    struct sembuf reset_ticket_ready;
+    reset_ticket_ready.sem_num = SEM_TICKET_READY;
+    reset_ticket_ready.sem_op = -semctl(semid, SEM_TICKET_READY, GETVAL);  // Reset to 0
+    reset_ticket_ready.sem_flg = 0;
+    if (semop(semid, &reset_ticket_ready, 1) < 0)
+    {
+        perror("Failed to reset ticket ready semaphore");
+    }
+}
+
 int main()
 {
     // Imposta i gestori dei segnali
@@ -870,7 +932,7 @@ int main()
     // Inizializza le variabili statistiche
     initialize_statistics(shared_memory);
 
-    // Initialize semaphore using the fixed key
+    // Inizializza i semafori
     semid = semget(SEM_KEY, NUM_SEMS, IPC_CREAT | 0666);
     if (semid < 0)
     {
@@ -883,36 +945,31 @@ int main()
     // Inizializza i semafori
     initialize_semaphores(semid, shmid, shared_memory);
 
-    // Create child processes
+    // Crea i processi necessari
     create_ticket_process(shared_memory);
     sleep(1);
     create_operators(shared_memory);
     sleep(1);
     create_users(shared_memory);
-    usleep(1000);
-    sleep(1.5);
+    sleep(1);
 
     // -----------------------------------------------------------------------------------------------------------------------------
-    // Main simulation loop
+    // LOOP PRINCIPALE DEL DIRETTORE
+    // -----------------------------------------------------------------------------------------------------------------------------
     printf("Director running... Press Ctrl+C to exit.\n");
 
 
     for (int day = 0; day < SIM_DURATION; day++)
     {
-        // Update simulation day in shared memory
+        // Imposta il giorno corrente nella memoria condivisa
         shared_memory->simulation_day = day + 1;
 
-        // Start of the day simulation
         printf("Day %d simulation started.\n", day + 1);
 
-        // Initialize random seed for each day
+        // Seed random per la giornata
         srand(time(NULL) + day);
 
-        // Initialize counters for the day
         initialize_counters_for_day(shared_memory);
-        
-        // Signal to all users that a new day is starting
-        printf("Notifying all users about day %d start...\n", day + 1);
 
         // Prima invia i segnali SIGUSR1 per preparare gli utenti
         for (int i = 0; i < NOF_USERS; i++) {
@@ -939,31 +996,28 @@ int main()
             }
         }
 
-        // Poi imposta il flag di giorno in corso nella memoria condivisa
+        // Imposta il flag day_in_progress 
         shared_memory->day_in_progress = 1;
 
-        // Rilascia il semaforo per tutti gli utenti, gli operatori e il processo ticket
+        // Semaforo contatore per iniziare la giornata
         struct sembuf barrier_release;
         barrier_release.sem_num = SEM_DAY_START;  
-        // Rilascia per tutti gli utenti, gli operatori e il processo ticket (+1)
         barrier_release.sem_op = NOF_USERS + NOF_WORKERS + 1;
         barrier_release.sem_flg = 0;
-
-        printf("Releasing day start semaphore for all %d processes (value = %d)...\n", 
-               NOF_USERS + NOF_WORKERS + 1, barrier_release.sem_op);
-                
+        
         if (semop(semid, &barrier_release, 1) < 0) {
             perror("Failed to release day start semaphore");
         }
 
-        
-        // Start the day simulation
-        printf("Simulating workday for day %d (duration: %d seconds)...\n", day + 1, DAY_SIMULATION_TIME);
+        // -----------------------------------------------------------------
+        // Inizia la simulazione della GIORNATA lavorativa
+        // -----------------------------------------------------------------
+        printf("Simulazione giornata lavorativa %d (durata: %d secondi)...\n", day + 1, DAY_SIMULATION_TIME);
         
         // Usiamo alarm per attendere esattamente DAY_SIMULATION_TIME
         int elapsed_seconds = 0;
         while (elapsed_seconds < DAY_SIMULATION_TIME) {
-            // Resetta il flag alarm_triggered
+
             alarm_triggered = 0;
             
             // Configura un timer di alarm per un secondo
@@ -980,34 +1034,30 @@ int main()
             sigset_t orig_mask;
             sigprocmask(SIG_SETMASK, &wait_mask, &orig_mask);
             
-            // Attendi finché alarm_triggered diventa true
             while (!alarm_triggered) {
+                // Esci dall'attesa se arriva un segnale specifico
                 sigsuspend(&wait_mask);
             }
-            
-            // Ripristina la maschera dei segnali originale
             sigprocmask(SIG_SETMASK, &orig_mask, NULL);
             
             // Incrementa il contatore e stampa lo stato
             elapsed_seconds++;
             if (elapsed_seconds % 1 == 0) {
-                printf("Day %d in progress: %d seconds elapsed\n", day + 1, elapsed_seconds);
+                printf("Giorno %d: %d secondi passati\n", day + 1, elapsed_seconds);
             }
 
-            // Check for explode condition
+            // Guarda se c'è una condizione di esplosione
             handle_explode_condition(shared_memory);
         }
         
-        printf("Day %d completed after %d seconds.\n", day + 1, DAY_SIMULATION_TIME);
+        printf("Giorno %d Completato dopo %d secondi.\n", day + 1, DAY_SIMULATION_TIME);
 
-        // Signal to all users that the day has ended
+        // Notifica tutti i processi della fine della giornata
         printf("Notifying all users about day %d end...\n", day + 1);
-        shared_memory->day_in_progress = 0;  // Clear the day in progress flag
-        
-        // Attendi che tutti i processi operatore e ticket abbiano completato
-        // l'elaborazione dei segnali di fine giornata
-        printf("Waiting for operators to complete their operations before printing statistics...\n");
-        sleep(2);  // Attesa adeguata per evitare race conditions nelle statistiche
+        shared_memory->day_in_progress = 0;  
+
+        // Breve attesa per stampare le statistiche
+        sleep(2);
 
         // Conta i ticket rimasti in coda alla fine della giornata
         count_remaining_tickets(shared_memory);
@@ -1015,7 +1065,7 @@ int main()
         // Svuota tutte le code alla fine della giornata
         clear_all_queues_at_day_end(shared_memory);
 
-        // Stampa il riepilogo giornaliero
+        // Stampa il riepilogo giornaliero (sulla giornata, non sulla simulazione)
         print_daily_summary(shared_memory);
 
         // Raccogli le statistiche giornaliere
@@ -1027,70 +1077,12 @@ int main()
         // Stampa la tabella separata dei tempi di servizio
         print_service_timing_statistics_table(shared_memory, day + 1);
 
-        // Resetta i contatori giornalieri
-        memset(shared_memory->daily_tickets_served, 0, sizeof(int) * SERVICE_COUNT);
-        memset(shared_memory->daily_users_home, 0, sizeof(int) * SERVICE_COUNT);
-        memset(shared_memory->daily_users_timeout, 0, sizeof(int) * SERVICE_COUNT);
-        memset(shared_memory->daily_users_no_ticket, 0, sizeof(int) * SERVICE_COUNT);
-        shared_memory->total_tickets_served = 0;
-        shared_memory->total_users_home = 0;
-        shared_memory->total_users_timeout = 0;
-        shared_memory->total_users_no_ticket = 0;
-        
-        // Resetta le statistiche sui tempi di attesa
-        for (int i = 0; i < SERVICE_COUNT; i++) {
-            shared_memory->min_wait_time[i] = LONG_MAX; // Valore massimo possibile
-            shared_memory->max_wait_time[i] = 0;
-            shared_memory->total_wait_time[i] = 0;
-            shared_memory->wait_count[i] = 0;
-            
-            // Resetta anche le statistiche giornaliere sui tempi di attesa
-            shared_memory->daily_total_wait_time[i] = 0;
-            shared_memory->daily_wait_count[i] = 0;
-            
-            // Resetta anche le statistiche sui tempi di servizio
-            shared_memory->min_service_time[i] = LONG_MAX;
-            shared_memory->max_service_time[i] = 0;
-            shared_memory->total_service_time[i] = 0;
-            shared_memory->service_count[i] = 0;
-            
-            // Azzera anche i contatori giornalieri
-            shared_memory->daily_users_timeout[i] = 0;
-        }
-        shared_memory->total_users_timeout = 0;
-        
-        // Resetta anche le statistiche aggregate sui tempi di attesa
-        shared_memory->daily_total_wait_time_all = 0;
-        shared_memory->daily_wait_count_all = 0;
-        
-        // Reset anche del next_request_index per il giorno successivo
-        shared_memory->next_request_index = 0;
+        // Resetta lo stato per il giorno successivo
+        reset_daily_state(shared_memory, semid);
 
-        // Reset the day start semaphore for the next day
-        struct sembuf reset_day_start;
-        reset_day_start.sem_num = SEM_DAY_START;
-        reset_day_start.sem_op = -semctl(semid, SEM_DAY_START, GETVAL);  // Reset to 0
-        reset_day_start.sem_flg = 0;
-        if (semop(semid, &reset_day_start, 1) < 0)
-        {
-            perror("Failed to reset day start semaphore");
-        }
-        
-        // Reset the ticket ready semaphore for the next day
-        struct sembuf reset_ticket_ready;
-        reset_ticket_ready.sem_num = SEM_TICKET_READY;
-        reset_ticket_ready.sem_op = -semctl(semid, SEM_TICKET_READY, GETVAL);  // Reset to 0
-        reset_ticket_ready.sem_flg = 0;
-        if (semop(semid, &reset_ticket_ready, 1) < 0)
-        {
-            perror("Failed to reset ticket ready semaphore");
-        }
-
-        // Prima notifichiamo il processo ticket della fine della giornata
+        // Notifica il processo ticket della fine della giornata
         if (shared_memory->ticket_pid > 0)
         {
-            printf("Notifying ticket process (PID: %d) about day %d end...\n", 
-                   shared_memory->ticket_pid, day + 1);
             if (kill(shared_memory->ticket_pid, SIGUSR2) < 0)
             {
                 perror("Failed to send SIGUSR2 to ticket process");
@@ -1109,7 +1101,7 @@ int main()
             }
         }
         
-        // Infine notifica tutti gli utenti della fine della giornata
+        // Notifica tutti gli utenti della fine della giornata
         for (int i = 0; i < NOF_USERS; i++)
         {
             if (shared_memory->user_pids[i] > 0)
@@ -1121,22 +1113,15 @@ int main()
             }
         }
         
-        printf("Day %d simulation ended.\n", day + 1);
+        printf("Giorno %d, simulazione finita.\n", day + 1);
         
-        // Attesa per garantire che tutti i processi abbiano elaborato i segnali di fine giornata
-        // prima di stampare le statistiche e resettare i contatori
-        printf("Waiting for all processes to complete day-end operations...\n");
-        sleep(1);
-
-        // Sleep per separare i giorni - aumentato a 5 secondi come richiesto
+        // Attesa di qualche secondo prima del giorno successivo
         sleep(5);
-        
     }
 
-    printf("Simulation completed. Cleaning up...\n");
+    printf("Simulazione finita; pulizia...\n");
     
-    // 1. Termina tutti i processi
-    // Termina ticket process
+    // Termina ticket
     if (shared_memory->ticket_pid > 0) {
         kill(shared_memory->ticket_pid, SIGTERM);
     }
@@ -1154,8 +1139,6 @@ int main()
             kill(shared_memory->operator_pids[i], SIGTERM);
         }
     }
-    
-    // Breve attesa per permettere ai processi di terminare
     sleep(1);
     
     // 2. Rilascia la memoria condivisa e altre risorse IPC
@@ -1174,8 +1157,7 @@ int main()
         semid = -1;
     }
     
-    printf("Simulation complete. Cleaning up resources...\n");
     cleanup_handler(0); // Use existing cleanup handler instead of separate function
-    printf("Director finished normally.\n");
+    printf("Simulazione finita in condizioni normali (timeout).\n");
     return 0;
 }
