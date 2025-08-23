@@ -27,14 +27,14 @@ volatile int current_day = 0;
 int msgid = -1;
 
 // Signal handler for termination
-void termination_handler(int signum)
+void termination_handler(int signum __attribute__((unused)))
 {
     printf("Ticket: Received signal %d, shutting down...\n", signum);
     running = 0;
 }
 
 // Implementiamo un handler per il segnale di inizio giornata
-void day_start_handler(int signum)
+void day_start_handler(int signum __attribute__((unused)))
 {
     // Do not increment current_day here - it should be managed by the director
     day_in_progress = 1;
@@ -92,7 +92,7 @@ void day_start_handler(int signum)
 }
 
 // Handler per la fine della giornata
-void day_end_handler(int signum)
+void day_end_handler(int signum __attribute__((unused)))
 {
     day_in_progress = 0;
 }
@@ -191,7 +191,7 @@ void process_new_ticket_request(TicketRequestMsg *msg)
     // per notificare immediatamente la disponibilità di un nuovo ticket
     for (int i = 0; i < NOF_WORKERS; i++) {
         if (shm_ptr->operators[i].active && 
-            shm_ptr->operators[i].current_service == service_id &&
+            (int)shm_ptr->operators[i].current_service == service_id &&
             shm_ptr->operators[i].status == OPERATOR_WORKING &&
             shm_ptr->operators[i].pid > 0) {
             kill(shm_ptr->operators[i].pid, SIGUSR1);

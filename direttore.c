@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <sys/wait.h>
 
+// Service names array is defined in config.h
+
 // Global variables for shared memory and semaphores
 int shmid = -1;
 int semid = -1;
@@ -22,7 +24,7 @@ SharedMemory *shared_memory = NULL; // Also make the pointer global if needed in
 volatile sig_atomic_t alarm_triggered = 0; // Flag per l'alarm handler
 
 // Handler per SIGALRM
-void alarm_handler(int signum) {
+void alarm_handler(int signum __attribute__((unused))) {
     alarm_triggered = 1;
 }
 
@@ -110,7 +112,7 @@ void cleanup_all_resources() {
     }
 }
 
-void handle_timeout(int signum) {
+void handle_timeout(int signum __attribute__((unused))) {
     printf("Simulation timeout reached. Cleaning up...\n");
     
     // Notify all processes to terminate
@@ -233,7 +235,8 @@ void initialize_counters_for_day(SharedMemory *shm_ptr)
         shm_ptr->counters[counter_idx].operator_pid = 0;
         shm_ptr->counters[counter_idx].total_served = 0;
         
-        counter_idx, SERVICE_NAMES[random_service], random_service;
+        printf("Counter %d: Service %s (%d)\n", 
+               counter_idx, SERVICE_NAMES[random_service], random_service);
     }
 
     printf("All counters initialized for day %d.\n", shm_ptr->simulation_day);
@@ -317,11 +320,6 @@ void print_daily_summary(SharedMemory *shm_ptr) {
     printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
 }
 
-// Funzione per stampare le statistiche sui tempi di attesa unificate
-void print_waiting_time_statistics(SharedMemory *shm_ptr) {
-    // This function is now empty - the table has been removed as requested
-}
-
 // Funzione per raccogliere le statistiche di fine giornata
 void collect_daily_statistics(SharedMemory *shm, int day_index) {
     // Raccoglie le statistiche aggregate della giornata
@@ -371,16 +369,6 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
         if (shm->operators[i].active && shm->operators[i].total_served > 0) {
             daily_operators_active++;
         }
-        // Per le pause giornaliere, calcoliamo la differenza dal giorno precedente
-        int pauses_this_day = shm->operators[i].total_pauses;
-        if (day_index > 0) {
-            // Sottrai le pause dei giorni precedenti per ottenere solo quelle di oggi
-            int previous_pauses = 0;
-            for (int prev_day = 0; prev_day < day_index; prev_day++) {
-                // Questo è complicato senza una struttura dati dedicata
-                // Per ora usiamo un approccio semplificato
-            }
-        }
         daily_total_pauses += shm->operators[i].total_pauses;
     }
     
@@ -402,7 +390,7 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
         // Conta gli operatori attivi per questo servizio specifico
         for (int i = 0; i < NOF_WORKERS; i++) {
             if (shm->operators[i].active && 
-                shm->operators[i].current_service == service && 
+                (int)shm->operators[i].current_service == service && 
                 shm->operators[i].total_served > 0) {
                 active_operators_for_service++;
             }
@@ -571,20 +559,6 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
             total_service_count_service += shm->service_count_per_service_per_day[i][day];
         }
         
-        // Calcola la media del tempo di servizio per tutta la simulazione
-        double avg_service_time_simulation = 0;
-        if (total_service_count_service > 0) {
-            avg_service_time_simulation = (double)total_service_time_service / total_service_count_service / 1000000000.0; // Converti in secondi
-        }
-        
-        // Calcola la media del tempo di servizio per l'ultimo giorno
-        double avg_service_time_daily = 0;
-        int last_day = days_completed - 1;
-        if (last_day >= 0 && shm->service_count_per_service_per_day[i][last_day] > 0) {
-            avg_service_time_daily = (double)shm->total_service_time_per_service_per_day[i][last_day] / 
-                                   shm->service_count_per_service_per_day[i][last_day] / 1000000000.0;
-        }
-        
         // Calcola la media giornaliera degli utenti serviti
         double avg_users_served_per_day = days_completed > 0 ? (double)total_users_served_service / days_completed : 0.0;
         
@@ -638,14 +612,14 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
         
         // Trova tutti gli sportelli assegnati a questo servizio per la giornata corrente
         for (int i = 0; i < NOF_WORKER_SEATS; i++) {
-            if (shm->counters[i].active && shm->counters[i].current_service == service) {
+            if (shm->counters[i].active && (int)shm->counters[i].current_service == service) {
                 counters_for_service[counter_count++] = i;
             }
         }
         
         // Trova tutti gli operatori che hanno questo servizio come servizio fisso
         for (int i = 0; i < NOF_WORKERS; i++) {
-            if (shm->operators[i].active && shm->operators[i].current_service == service) {
+            if (shm->operators[i].active && (int)shm->operators[i].current_service == service) {
                 operators_for_service[operator_count++] = i;
                 // Conta quelli che hanno effettivamente servito utenti nell'ultimo giorno
                 if (shm->operators[i].total_served > 0) {
@@ -782,12 +756,6 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
     if (simulation_total_wait_count > 0) {
         // Media calcolata su TUTTI gli utenti serviti di tutta la simulazione
         double simulation_avg_ms = (simulation_total_wait_time / 1000000.0) / simulation_total_wait_count;
-        double overall_min_ms = overall_min_wait != LONG_MAX ? overall_min_wait / 1000000.0 : 0.0;
-        double overall_max_ms = overall_max_wait / 1000000.0;
-        
-        // Converti in minuti simulati
-        double overall_min_min = overall_min_wait != LONG_MAX ? nanoseconds_to_simulated_minutes(overall_min_wait) : 0.0;
-        double overall_max_min = nanoseconds_to_simulated_minutes(overall_max_wait);
         double simulation_avg_min = nanoseconds_to_simulated_minutes(simulation_total_wait_time / simulation_total_wait_count);
         
         printf("| Media                | %8s | %8s | %8s | %8s | %8.1f | %8.3f |\n",
@@ -1070,9 +1038,6 @@ int main()
         // Stampa tutte le statistiche complete alla fine di ogni giorno
         print_comprehensive_statistics(shared_memory, day + 1);
         
-        // Stampa le statistiche sui tempi di attesa (dettagliate per servizio)
-        print_waiting_time_statistics(shared_memory);
-
         // Stampa la tabella separata dei tempi di servizio
         print_service_timing_statistics_table(shared_memory, day + 1);
 

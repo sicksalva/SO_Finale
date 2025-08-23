@@ -27,13 +27,13 @@ int semid = -1;
 static int msgid = -1;
 
 // Signal handler for day start
-void day_start_handler(int signum)
+void day_start_handler(int signum __attribute__((unused)))
 {
     // Non impostare day_started qui - aspetteremo il semaforo
 }
 
 // Signal handler for day end
-void day_end_handler(int signum)
+void day_end_handler(int signum __attribute__((unused)))
 {
     day_started = 0;
     // Do not increment current_day here - it should be managed by the director
@@ -52,7 +52,7 @@ void cleanup_resources() {
 }
 
 // Signal handler for simulation end
-void end_simulation_handler(int signum)
+void end_simulation_handler(int signum __attribute__((unused)))
 {
     simulation_active = 0;
     cleanup_resources();
@@ -220,14 +220,12 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
         // Prima di attendere il segnale, controlliamo lo stato della richiesta
         if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
         {
-            // Usa il tempo di attesa già calcolato dall'operatore (più preciso)
-            long wait_time_ns = shm_ptr->ticket_requests[request_index].wait_time_ns;
-            
             // Le statistiche sui tempi di attesa sono già aggiornate dall'operatore
             // Non è necessario aggiornare nuovamente qui
             
             //printf("[UTENTE %d] Ticket %s ricevuto con successo per il servizio %s (controllo immediato) dopo %.2f secondi\n", 
-            //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], wait_time_ns / 1000000000.0);
+            //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], 
+            //       shm_ptr->ticket_requests[request_index].wait_time_ns / 1000000000.0);
             
             // Sblocca i segnali prima di uscire
             sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
@@ -248,14 +246,12 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
             // Controlla lo stato della richiesta
             if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
             {
-                // Usa il tempo di attesa già calcolato dall'operatore (più preciso)
-                long wait_time_ns = shm_ptr->ticket_requests[request_index].wait_time_ns;
-                
                 // Le statistiche sui tempi di attesa sono già aggiornate dall'operatore
                 // Non è necessario aggiornare nuovamente qui
                 
                 //printf("\t[UTENTE %d] Ticket %s ricevuto con successo per il servizio %s dopo %.2f secondi\n", 
-                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], wait_time_ns / 1000000000.0);
+                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], 
+                //       shm_ptr->ticket_requests[request_index].wait_time_ns / 1000000000.0);
                 
                 // Sblocca i segnali prima di uscire
                 sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
@@ -274,14 +270,12 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
             // Prima di interrompere, verifichiamo se il ticket è pronto
             if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
             {
-                // Usa il tempo di attesa già calcolato dall'operatore (più preciso)
-                long wait_time_ns = shm_ptr->ticket_requests[request_index].wait_time_ns;
-                
                 // Le statistiche sui tempi di attesa sono già aggiornate dall'operatore
                 // Non è necessario aggiornare nuovamente qui
                 
                 //printf("\t[UTENTE %d] Ticket %s ricevuto appena prima della fine della giornata dopo %.2f secondi, ma non servito\n", 
-                      // user_id, shm_ptr->ticket_requests[request_index].ticket_id, wait_time_ns / 1000000000.0);
+                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, 
+                //       shm_ptr->ticket_requests[request_index].wait_time_ns / 1000000000.0);
                 
                 // Sblocca i segnali prima di uscire
                 sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
@@ -293,14 +287,12 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
             // Timeout: controlliamo lo stato direttamente in caso di segnale perso
             if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
             {
-                // Usa il tempo di attesa già calcolato dall'operatore (più preciso)
-                long wait_time_ns = shm_ptr->ticket_requests[request_index].wait_time_ns;
-                
                 // Le statistiche sui tempi di attesa sono già aggiornate dall'operatore
                 // Non è necessario aggiornare nuovamente qui
                 
                 //printf("\t[UTENTE %d] Ticket %s ricevuto con successo per il servizio %s (controllo manuale) dopo %.2f secondi\n", 
-                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], wait_time_ns / 1000000000.0);
+                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], 
+                //       shm_ptr->ticket_requests[request_index].wait_time_ns / 1000000000.0);
                 
                 // Sblocca i segnali prima di uscire
                 sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
@@ -476,15 +468,12 @@ int main(int argc, char *argv[])
             // If it's time to arrive at the post office
             if (elapsed_seconds >= arrival_seconds)
             {
-                // Calculate the simulated minute based on elapsed time
-                int simulated_minute = (int)((elapsed_seconds / DAY_SIMULATION_TIME) * WORK_DAY_MINUTES);
-
                 // Verifica se il servizio è disponibile in almeno uno sportello attivo
                 int service_available = 0;
                 for (int i = 0; i < NOF_WORKER_SEATS; i++)
                 {
                     if (shm_ptr->counters[i].active &&
-                        shm_ptr->counters[i].current_service == service_id)
+                        (int)shm_ptr->counters[i].current_service == service_id)
                     {
                         service_available = 1;
                         break;

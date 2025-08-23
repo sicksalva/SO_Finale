@@ -131,8 +131,8 @@ typedef struct {
     pid_t user_pid;         // PID del processo utente richiedente
 } TicketRequestMsg;
 
-// Array of service names
-static const char* SERVICE_NAMES[] = {
+// Array of service names 
+const char* SERVICE_NAMES[] = {
     "Pacchi",
     "Lettere",
     "Bancoposta",

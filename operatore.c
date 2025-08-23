@@ -39,7 +39,7 @@ int safe_semop(int semid, struct sembuf *sops, size_t nsops) {
 }
 
 // Handler per il segnale di alarm (per evitare deadlock)
-void alarm_handler(int signum) {
+void alarm_handler(int signum __attribute__((unused))) {
     alarm_triggered = 1; // Segnala che il timer è scaduto
 }
 
@@ -264,13 +264,10 @@ int serve_customer(int assigned_counter)
         long wait_time_ns = (ticket->service_start_time.tv_sec - ticket->request_time.tv_sec) * 1000000000L +
                            (ticket->service_start_time.tv_nsec - ticket->request_time.tv_nsec);
         ticket->wait_time_ns = wait_time_ns;
-        
-        // Converti il tempo di attesa in millisecondi per la stampa
-        double wait_time_ms = wait_time_ns / 1000000.0;
 
         // Stampa il messaggio di inizio servizio con il tempo di attesa
         //printf("🕐 [OPERATORE %d] Inizio servizio per utente #%d (Ticket: %s) - Attesa: %.1fms\n",
-        //       operator_id, ticket->user_id, ticket->ticket_id, wait_time_ms);
+        //       operator_id, ticket->user_id, ticket->ticket_id, wait_time_ns / 1000000.0);
 
         // Calcola un tempo di servizio casuale
         long service_time = calculate_random_service_time(random_service); 
@@ -370,8 +367,8 @@ int serve_customer(int assigned_counter)
 
         // Registra il tempo di fine servizio e calcola la durata reale in secondi
         gettimeofday(&end_time, NULL);
-        double service_duration_sec = (end_time.tv_sec - start_time.tv_sec) +
-                                      (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
+        //double service_duration_sec = (end_time.tv_sec - start_time.tv_sec) +
+        //                              (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
 
         // Registra anche il tempo di fine per le statistiche sui tempi di servizio
         struct timespec end_service_time;
@@ -381,7 +378,7 @@ int serve_customer(int assigned_counter)
 
         // Converti la durata da secondi reali a minuti simulati
         // WORK_DAY_MINUTES minuti simulati corrispondono a DAY_SIMULATION_TIME secondi reali
-        double service_duration_min = (service_duration_sec / DAY_SIMULATION_TIME) * WORK_DAY_MINUTES;
+        //double service_duration_min = (service_duration_sec / DAY_SIMULATION_TIME) * WORK_DAY_MINUTES;
 
         // Aggiorna le statistiche sui tempi di servizio con mutex per thread safety
         struct sembuf sem_service_stats;
@@ -483,7 +480,7 @@ int serve_customer(int assigned_counter)
 }
 
 // Handler per la fine della giornata
-void day_end_handler(int signum)
+void day_end_handler(int signum __attribute__((unused)))
 {
     if (signum == SIGUSR2)
     {
@@ -519,7 +516,7 @@ void day_end_handler(int signum)
 }
 
 // Handler per l'inizio della giornata
-void day_start_handler(int signum)
+void day_start_handler(int signum __attribute__((unused)))
 {
     if (signum == SIGUSR1)
     {
@@ -534,7 +531,7 @@ void day_start_handler(int signum)
 }
 
 // Handler per la terminazione
-void termination_handler(int signum)
+void termination_handler(int signum __attribute__((unused)))
 {
     //printf("[OPERATORE %d] Ricevuto segnale di terminazione.\n", operator_id);
     running = 0;
