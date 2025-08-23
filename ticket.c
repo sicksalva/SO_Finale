@@ -1,0 +1,448 @@
+#define _GNU_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/sem.h>
+#include <sys/msg.h>
+#include <signal.h>
+#include <time.h>
+#include <string.h>
+#include <errno.h>
+#include <sys/time.h>  // Per gettimeofday()
+#include "config.h"
+
+// Global variables
+SharedMemory *shm_ptr = NULL;
+int semid = -1;
+int shmid = -1;
+volatile int running = 1;
+volatile int simulation_active = 1;
+volatile int day_in_progress = 0;
+volatile int current_day = 0;
+
+// Variabile globale per la coda di messaggi
+int msgid = -1;
+
+// Signal handler for termination
+void termination_handler(int signum)
+{
+    printf("Ticket: Received signal %d, shutting down...\n", signum);
+    running = 0;
+}
+
+// Implementiamo un handler per il segnale di inizio giornata
+void day_start_handler(int signum)
+{
+    // Do not increment current_day here - it should be managed by the director
+    day_in_progress = 1;
+    
+    // Reset dei contatori giornalieri
+    if (shm_ptr != NULL && shm_ptr != (void *)-1)
+    {
+        // Acquisire il mutex per proteggere l'accesso ai contatori
+        struct sembuf sem_op;
+        sem_op.sem_num = SEM_QUEUE;
+        sem_op.sem_op = -1; // Lock (P operation)
+        sem_op.sem_flg = 0;
+
+        if (semop(semid, &sem_op, 1) < 0)
+        {
+            perror("Ticket: Failed to acquire queue mutex for daily reset");
+        }
+        else
+        {
+            // Reset dell'indice delle richieste
+            shm_ptr->next_request_index = 0;
+
+            // Reset di tutti gli array e contatori delle code
+            for (int i = 0; i < SERVICE_COUNT; i++)
+            {
+                // Reset dei contatori di testa e coda per ogni servizio
+                shm_ptr->service_queue_head[i] = 0;
+                shm_ptr->service_queue_tail[i] = 0;
+                shm_ptr->service_tickets_waiting[i] = 0;
+                
+                // Reset della numerazione dei ticket per ogni servizio 
+                // in modo che ogni giorno inizi da 1
+                shm_ptr->next_service_ticket[i] = 1;
+            }
+
+            // Reset solo delle richieste completate/rifiutate, non di quelle attive
+            for (int i = 0; i < MAX_REQUESTS; i++) {
+                if (shm_ptr->ticket_requests[i].status == REQUEST_COMPLETED ||
+                    shm_ptr->ticket_requests[i].status == REQUEST_REJECTED ||
+                    shm_ptr->ticket_requests[i].status == REQUEST_UNDEFINED) {
+                    memset(&shm_ptr->ticket_requests[i], 0, sizeof(TicketRequest));
+                }
+            }
+
+            //printf("Ticket: Reset all counters and request index for day %d\n", current_day);
+
+            // Rilascio del mutex
+            sem_op.sem_op = 1; // Unlock (V operation)
+            if (semop(semid, &sem_op, 1) < 0)
+            {
+                perror("Ticket: Failed to release queue mutex after daily reset");
+            }
+        }
+    }
+}
+
+// Handler per la fine della giornata
+void day_end_handler(int signum)
+{
+    day_in_progress = 0;
+}
+
+
+
+
+
+// Nuova funzione per elaborare direttamente i messaggi di richiesta ticket usando request_index
+void process_new_ticket_request(TicketRequestMsg *msg)
+{
+    // CONTROLLO CRITICO: Verifica che la giornata sia ancora in corso
+    if (!shm_ptr->day_in_progress || !day_in_progress) {
+        printf("Ticket: [REJECTED] Richiesta da utente %d rifiutata - giornata terminata\n", msg->user_id);
+        
+        // Notifica l'utente che la richiesta è stata rifiutata
+        if (msg->user_pid > 0) {
+            kill(msg->user_pid, SIGUSR2);
+        }
+        return;
+    }
+
+    // Salva il PID dell'utente per inviare la notifica successivamente
+    pid_t user_pid = msg->user_pid;
+    int request_index = msg->request_index;
+
+    // Verifica che il request_index sia valido
+    if (request_index < 0 || request_index >= MAX_REQUESTS) {
+        printf("Ticket: [ERROR] request_index %d non valido\n", request_index);
+        return;
+    }
+
+    // Ottieni direttamente la richiesta dalla memoria condivisa usando l'indice
+    TicketRequest *request = &(shm_ptr->ticket_requests[request_index]);
+    
+    // Verifica che la richiesta esista e sia in stato PENDING
+    if (request->status != REQUEST_PENDING) {
+        printf("Ticket: [ERROR] Richiesta %d non è PENDING (status: %d)\n", 
+               request_index, request->status);
+        return;
+    }
+
+    // Update request status to processing
+    request->status = REQUEST_PROCESSING;
+
+    // Acquire mutex for ticket queues
+    struct sembuf sem_op;
+    sem_op.sem_num = SEM_QUEUE;
+    sem_op.sem_op = -1; // Lock
+    sem_op.sem_flg = 0;
+
+    if (semop(semid, &sem_op, 1) < 0)
+    {
+        perror("Ticket: Failed to acquire queue mutex");
+        request->status = REQUEST_REJECTED;
+        return;
+    }
+
+    // Get the next ticket number for this specific service
+    int service_id = request->service_id;
+    int ticket_number = shm_ptr->next_service_ticket[service_id]++;
+
+    // Add ticket to the appropriate service queue
+    int queue_pos = shm_ptr->service_queue_tail[service_id];
+    shm_ptr->service_queues[service_id][queue_pos] = request_index;
+
+    // Update queue tail (circular buffer)
+    shm_ptr->service_queue_tail[service_id] = (queue_pos + 1) % MAX_SERVICE_QUEUE;
+
+    // Update ticket count for this service
+    shm_ptr->service_tickets_waiting[service_id]++;
+
+    // Release the mutex
+    sem_op.sem_num = SEM_QUEUE;
+    sem_op.sem_op = 1; // Unlock
+    sem_op.sem_flg = 0;
+
+    if (semop(semid, &sem_op, 1) < 0)
+    {
+        perror("Ticket: Failed to release queue mutex");
+        // We continue anyway as the critical section is done
+    }
+    
+    // Notifica gli operatori che c'è un nuovo ticket disponibile
+    struct sembuf ticket_ready_signal;
+    ticket_ready_signal.sem_num = SEM_TICKET_READY;
+    ticket_ready_signal.sem_op = 1; // Signal (V operation)
+    ticket_ready_signal.sem_flg = 0;
+    
+    if (semop(semid, &ticket_ready_signal, 1) < 0)
+    {
+        perror("Ticket: Failed to signal ticket ready");
+    }
+
+    // NOTIFICA ISTANTANEA: Invia segnale SIGUSR1 a tutti gli operatori attivi per questo servizio
+    // per notificare immediatamente la disponibilità di un nuovo ticket
+    for (int i = 0; i < NOF_WORKERS; i++) {
+        if (shm_ptr->operators[i].active && 
+            shm_ptr->operators[i].current_service == service_id &&
+            shm_ptr->operators[i].status == OPERATOR_WORKING &&
+            shm_ptr->operators[i].pid > 0) {
+            kill(shm_ptr->operators[i].pid, SIGUSR1);
+        }
+    }
+
+    // Generate the ticket identifier (e.g., L1, B1, etc.)
+    char ticket_id[10];
+    sprintf(ticket_id, "%c%d", SERVICE_PREFIXES[service_id], ticket_number);
+
+    // Update the request with ticket info
+    request->ticket_number = ticket_number;
+    request->status = REQUEST_COMPLETED; // Ticket generation completed
+    strncpy(request->ticket_id, ticket_id, sizeof(request->ticket_id) - 1);
+    request->ticket_id[sizeof(request->ticket_id) - 1] = '\0'; // Ensure null termination
+
+    //printf("Ticket: Assigned ticket %s to user %d for service %s\n",
+    //       ticket_id, request->user_id, SERVICE_NAMES[request->service_id]);
+    
+    // Invia un segnale all'utente per notificare che la richiesta è stata elaborata
+    if (user_pid > 0) {
+        //printf("Ticket: Invio segnale SIGUSR1 all'utente %d (PID: %d)\n", 
+        //      msg->user_id, user_pid);
+        kill(user_pid, SIGUSR1);
+    }
+}
+
+int main()
+{
+    // Set up signal handlers
+    signal(SIGTERM, termination_handler); // Termination signal
+    signal(SIGINT, termination_handler);  // Ctrl+C
+    signal(SIGUSR1, day_start_handler);   // Start of day
+    signal(SIGUSR2, day_end_handler);     // End of day
+
+    //printf("Ticket process starting...\n");
+
+    // Attach to shared memory
+    shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
+    if (shmid == -1)
+    {
+        perror("Ticket: shmget failed");
+        exit(EXIT_FAILURE);
+    }
+
+    shm_ptr = (SharedMemory *)shmat(shmid, NULL, 0);
+    if (shm_ptr == (void *)-1)
+    {
+        perror("Ticket: shmat failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Get access to semaphores
+    semid = semget(SEM_KEY, NUM_SEMS, 0666);
+    if (semid == -1)
+    {
+        perror("Ticket: semget failed");
+        shmdt(shm_ptr);
+        exit(EXIT_FAILURE);
+    }
+
+    // Crea o accedi alla coda di messaggi
+    msgid = msgget(MSG_QUEUE_KEY, IPC_CREAT | 0666);
+    if (msgid == -1)
+    {
+        perror("Ticket: msgget failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Store our PID in shared memory
+    shm_ptr->ticket_pid = getpid();
+
+    // Inizializzazione iniziale
+    struct sembuf sem_op;
+    sem_op.sem_num = SEM_QUEUE;
+    sem_op.sem_op = -1; // Lock
+    sem_op.sem_flg = 0;
+
+    if (semop(semid, &sem_op, 1) < 0)
+    {
+        perror("Ticket: Failed to acquire queue mutex for initialization");
+        shmdt(shm_ptr);
+        exit(EXIT_FAILURE);
+    }
+
+    // Initialize service queues
+    for (int i = 0; i < SERVICE_COUNT; i++)
+    {
+        if (shm_ptr->next_service_ticket[i] == 0)
+        {
+            shm_ptr->next_service_ticket[i] = 1; // Start each service with ticket #1
+        }
+    }
+
+    // Release the mutex
+    sem_op.sem_num = SEM_QUEUE;
+    sem_op.sem_op = 1; // Unlock
+    sem_op.sem_flg = 0;
+
+    if (semop(semid, &sem_op, 1) < 0)
+    {
+        perror("Ticket: Failed to release queue mutex after initialization");
+        shmdt(shm_ptr);
+        exit(EXIT_FAILURE);
+    }
+
+    //printf("Ticket process initialized. PID: %d\n", getpid());
+
+    // Loop principale per la simulazione
+    while (running)
+    {
+        // Attendi l'inizio della giornata tramite segnale e semaforo
+        if (!shm_ptr->day_in_progress && running)
+        {
+            //printf("Ticket: Attendo l'inizio della giornata...\n");
+            
+            // Configura un set di segnali per attendere il segnale SIGUSR1
+            sigset_t wait_mask;
+            sigfillset(&wait_mask);
+            sigdelset(&wait_mask, SIGUSR1);  // Attendi il segnale di inizio giornata
+            sigdelset(&wait_mask, SIGTERM);  // Permettiamo anche la terminazione
+            
+            // Sospendi l'esecuzione fino a quando non arriva un segnale
+            sigsuspend(&wait_mask);
+            
+            // Dopo aver ricevuto il segnale, attendi anche sul semaforo SEM_DAY_START
+            struct sembuf sem_wait;
+            sem_wait.sem_num = SEM_DAY_START;
+            sem_wait.sem_op = -1;  // Operazione P (wait)
+            sem_wait.sem_flg = 0;
+            
+            //printf("Ticket: Attendo sulla barriera semaforo SEM_DAY_START...\n");
+            
+            // Attendi sul semaforo
+            if (semop(semid, &sem_wait, 1) < 0) {
+                if (errno != EINTR) {  // Ignora se interrotto da segnale
+                    perror("Ticket: semop wait for day start failed");
+                }
+            } else {
+                //printf("Ticket: Semaforo SEM_DAY_START acquisito, giornata iniziata\n");
+            }
+        }
+
+        if (!running)
+            break;
+
+        // All'inizio di ogni giornata, resetta i contatori e le code
+        sem_op.sem_num = SEM_QUEUE;
+        sem_op.sem_op = -1; // Lock
+        sem_op.sem_flg = 0;
+
+        if (semop(semid, &sem_op, 1) < 0)
+        {
+            perror("Ticket: Failed to acquire queue mutex for daily reset");
+        }
+        else
+        {
+            // Reset dell'indice delle richieste
+            //printf("Ticket: Reset next_request_index from %d to 0 for day %d\n",
+            //       shm_ptr->next_request_index, shm_ptr->simulation_day);
+            shm_ptr->next_request_index = 0;
+
+            // Reset di tutti gli array e contatori delle code
+            for (int i = 0; i < SERVICE_COUNT; i++)
+            {
+                // Reset dei contatori di testa e coda per ogni servizio
+                shm_ptr->service_queue_head[i] = 0;
+                shm_ptr->service_queue_tail[i] = 0;
+                shm_ptr->service_tickets_waiting[i] = 0;
+                
+                // Reset della numerazione per ogni nuovo giorno
+                shm_ptr->next_service_ticket[i] = 1;
+            }
+
+            // Reset delle richieste in coda
+            memset(shm_ptr->ticket_requests, 0, sizeof(TicketRequest) * MAX_REQUESTS);
+
+            // Release the mutex
+            sem_op.sem_num = SEM_QUEUE;
+            sem_op.sem_op = 1; // Unlock
+            sem_op.sem_flg = 0;
+
+            if (semop(semid, &sem_op, 1) < 0)
+            {
+                perror("Ticket: Failed to release queue mutex after daily reset");
+            }
+
+            //printf("Ticket: All counters reset for day %d\n", shm_ptr->simulation_day);
+        }
+
+        //-----------------------------------------------------------------------------------------------------------------------------------------------------
+        // Loop per la giornata corrente - gestisce le richieste di ticket
+        //printf("Ticket: Giorno %d in corso, in attesa di richieste ticket\n", shm_ptr->simulation_day);
+        
+        while (shm_ptr->day_in_progress && running)
+        {
+            // ZERO ATTESA ATTIVA: msgrcv bloccante che aspetta istantaneamente i messaggi
+            TicketRequestMsg msg;
+            ssize_t msgsize;
+            
+            // Attesa BLOCCANTE sui messaggi - il processo si blocca fino all'arrivo di un messaggio
+            // o fino a quando viene interrotto da un segnale (es. SIGUSR2 per fine giornata)
+            msgsize = msgrcv(msgid, &msg, sizeof(msg) - sizeof(long),
+                          MSG_TICKET_REQUEST, 0); // 0 = bloccante, nessun IPC_NOWAIT
+            
+            if (msgsize > 0) 
+            {
+                //printf("Ticket: Ricevuta richiesta da utente %d (PID: %d) per servizio %s\n",
+                //      msg.user_id, msg.user_pid, SERVICE_NAMES[msg.service_id]);
+                      
+                if (shm_ptr->day_in_progress) {
+                    // Richiesta ricevuta - processa immediatamente
+                    process_new_ticket_request(&msg);
+                    
+                    // Segnala il completamento dell'elaborazione
+                    //printf("Ticket: Richiesta elaborata per utente %d\n", msg.user_id);
+                } else {
+                    // La giornata è finita mentre elaboravamo la richiesta
+                    //printf("Ticket: Giornata terminata durante l'elaborazione della richiesta per utente %d\n", 
+                    //      msg.user_id);
+                    
+                    // Segnala comunque all'utente che la richiesta è stata ricevuta ma non elaborata
+                    if (msg.user_pid > 0) {
+                        kill(msg.user_pid, SIGUSR2);
+                    }
+                }
+            }
+            else if (errno == EINTR) 
+            {
+                // Interrotto da un segnale (es. SIGUSR2 per fine giornata) - comportamento normale
+                // Il loop ricontrollerà la condizione day_in_progress
+            }
+            else if (errno != ENOMSG) 
+            {
+                // Errore diverso da "nessun messaggio" o interruzione da segnale
+                perror("Ticket: msgrcv failed");
+            }
+        }
+
+        //printf("Ticket: Day %d completed\n", shm_ptr->simulation_day);
+    }
+
+    // Cleanup
+    //printf("Ticket process terminating...\n");
+
+    if (shm_ptr != NULL && shm_ptr != (void *)-1)
+    {
+        shm_ptr->ticket_pid = 0; // Clear our PID from shared memory
+        shmdt(shm_ptr);
+    }
+
+    //printf("Ticket process terminated\n");
+    return 0;
+}
