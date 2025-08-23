@@ -20,6 +20,7 @@ int shmid = -1;
 int semid = -1;
 SharedMemory *shared_memory = NULL;
 volatile sig_atomic_t alarm_triggered = 0; // Flag per l'alarm handler
+volatile sig_atomic_t cleanup_in_progress = 0; // Flag to prevent re-entrancy
 
 // Handler per SIGALRM
 void alarm_handler(int signum __attribute__((unused))) {
@@ -28,9 +29,15 @@ void alarm_handler(int signum __attribute__((unused))) {
 
 // Handler per la pulizia in caso di segnali di terminazione
 void cleanup_handler(int signum __attribute__((unused))) {
+    if (cleanup_in_progress) {
+        return;
+    }
+    cleanup_in_progress = 1;
+
+    printf("Pulizia iniziata...\n");
+
     // 1. Termina tutti i processi figli
     if (shared_memory != NULL && shared_memory != (void *)-1) {
-
         // Termina ticket process
         if (shared_memory->ticket_pid > 0) {
             kill(shared_memory->ticket_pid, SIGTERM);
@@ -49,18 +56,21 @@ void cleanup_handler(int signum __attribute__((unused))) {
                 kill(shared_memory->operator_pids[i], SIGTERM);
             }
         }
-        // Breve attesa per permettere ai processi di terminare
-        sleep(1);
+
+        // Attendi la terminazione di tutti i processi figli in modo robusto
+        pid_t wpid;
+        int status;
+        while ((wpid = wait(&status)) > 0 || (wpid == -1 && errno == EINTR)) {
+            // Il loop continua finché i figli terminano o wait è interrotto
+        }
     }
     
     // 2. Pulisci la coda di messaggi
+    printf("Pulendo le risorse IPC...\n");
     int msgid = msgget(MSG_QUEUE_KEY, 0666);
     if (msgid != -1) {
         if (msgctl(msgid, IPC_RMID, NULL) == -1) {
             perror("Failed to remove message queue");
-        } else {
-            // Messaggio Debug:
-            //printf("Message queue removed successfully\n");
         }
     }
     
@@ -81,6 +91,7 @@ void cleanup_handler(int signum __attribute__((unused))) {
         semid = -1;
     }
     
+    printf("Pulizia completata.\n");
     // 5. Esci dal programma
     exit(EXIT_SUCCESS);
 }
@@ -293,6 +304,49 @@ void print_daily_summary(SharedMemory *shm_ptr) {
            total_no_ticket,
            total_timeout);
     printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+}
+
+// Funzione per notificare tutti i processi con un segnale specifico
+void notify_all_processes(SharedMemory *shm, int signum) {
+    const char *signal_name;
+    if (signum == SIGUSR1) {
+        signal_name = "SIGUSR1";
+    } else if (signum == SIGUSR2) {
+        signal_name = "SIGUSR2";
+    } else {
+        signal_name = "Unknown Signal";
+    }
+
+    // Notifica il processo ticket
+    if (shm->ticket_pid > 0) {
+        if (kill(shm->ticket_pid, signum) < 0) {
+            char error_msg[100];
+            sprintf(error_msg, "Failed to send %s to ticket process", signal_name);
+            perror(error_msg);
+        }
+    }
+
+    // Notifica tutti gli operatori
+    for (int i = 0; i < NOF_WORKERS; i++) {
+        if (shm->operator_pids[i] > 0) {
+            if (kill(shm->operator_pids[i], signum) < 0) {
+                char error_msg[100];
+                sprintf(error_msg, "Failed to send %s to operator %d", signal_name, i);
+                perror(error_msg);
+            }
+        }
+    }
+
+    // Notifica tutti gli utenti
+    for (int i = 0; i < NOF_USERS; i++) {
+        if (shm->user_pids[i] > 0) {
+            if (kill(shm->user_pids[i], signum) < 0) {
+                char error_msg[100];
+                sprintf(error_msg, "Failed to send %s to user %d", signal_name, i);
+                perror(error_msg);
+            }
+        }
+    }
 }
 
 // Funzione per raccogliere le statistiche di fine giornata
@@ -971,30 +1025,8 @@ int main()
 
         initialize_counters_for_day(shared_memory);
 
-        // Prima invia i segnali SIGUSR1 per preparare gli utenti
-        for (int i = 0; i < NOF_USERS; i++) {
-            if (shared_memory->user_pids[i] > 0) {
-                if (kill(shared_memory->user_pids[i], SIGUSR1) < 0) {
-                    perror("Failed to send SIGUSR1 to user");
-                }
-            }
-        }
-        
-        // Invia segnali SIGUSR1 agli operatori per avvisarli dell'inizio giornata
-        for (int i = 0; i < NOF_WORKERS; i++) {
-            if (shared_memory->operator_pids[i] > 0) {
-                if (kill(shared_memory->operator_pids[i], SIGUSR1) < 0) {
-                    perror("Failed to send SIGUSR1 to operator");
-                }
-            }
-        }
-        
-        // Invia un segnale SIGUSR1 al processo ticket per notificare l'inizio della giornata
-        if (shared_memory->ticket_pid > 0) {
-            if (kill(shared_memory->ticket_pid, SIGUSR1) < 0) {
-                perror("Failed to send SIGUSR1 to ticket process");
-            }
-        }
+        // Notifica a tutti i processi l'inizio della giornata
+        notify_all_processes(shared_memory, SIGUSR1);
 
         // Imposta il flag day_in_progress 
         shared_memory->day_in_progress = 1;
@@ -1080,84 +1112,20 @@ int main()
         // Resetta lo stato per il giorno successivo
         reset_daily_state(shared_memory, semid);
 
-        // Notifica il processo ticket della fine della giornata
-        if (shared_memory->ticket_pid > 0)
-        {
-            if (kill(shared_memory->ticket_pid, SIGUSR2) < 0)
-            {
-                perror("Failed to send SIGUSR2 to ticket process");
-            }
-        }
-        
-        // Notifica tutti gli operatori della fine della giornata
-        for (int i = 0; i < NOF_WORKERS; i++)
-        {
-            if (shared_memory->operator_pids[i] > 0)
-            {
-                if (kill(shared_memory->operator_pids[i], SIGUSR2) < 0)
-                {
-                    perror("Failed to send SIGUSR2 to operator");
-                }
-            }
-        }
-        
-        // Notifica tutti gli utenti della fine della giornata
-        for (int i = 0; i < NOF_USERS; i++)
-        {
-            if (shared_memory->user_pids[i] > 0)
-            {
-                if (kill(shared_memory->user_pids[i], SIGUSR2) < 0)
-                {
-                    perror("Failed to send SIGUSR2 to user");
-                }
-            }
-        }
+        // Notifica a tutti i processi la fine della giornata
+        notify_all_processes(shared_memory, SIGUSR2);
         
         printf("Giorno %d, simulazione finita.\n", day + 1);
         
         // Attesa di qualche secondo prima del giorno successivo
-        sleep(5);
+        sleep(3);
     }
 
     printf("Simulazione finita; pulizia...\n");
     
-    // Termina ticket
-    if (shared_memory->ticket_pid > 0) {
-        kill(shared_memory->ticket_pid, SIGTERM);
-    }
+    // Pulizia finale
+    cleanup_handler(0);
     
-    // Termina tutti gli utenti
-    for (int i = 0; i < NOF_USERS; i++) {
-        if (shared_memory->user_pids[i] > 0) {
-            kill(shared_memory->user_pids[i], SIGTERM);
-        }
-    }
-    
-    // Termina tutti gli operatori
-    for (int i = 0; i < NOF_WORKERS; i++) {
-        if (shared_memory->operator_pids[i] > 0) {
-            kill(shared_memory->operator_pids[i], SIGTERM);
-        }
-    }
-    sleep(1);
-    
-    // 2. Rilascia la memoria condivisa e altre risorse IPC
-    if (shared_memory != NULL && shared_memory != (void *)-1) {
-        shmdt(shared_memory);
-        shared_memory = NULL;
-    }
-    
-    if (shmid != -1) {
-        shmctl(shmid, IPC_RMID, NULL);
-        shmid = -1;
-    }
-    
-    if (semid != -1) {
-        semctl(semid, 0, IPC_RMID);
-        semid = -1;
-    }
-    
-    cleanup_handler(0); // Use existing cleanup handler instead of separate function
-    printf("Simulazione finita in condizioni normali (timeout).\n");
+    printf("Simulazione finita in condizioni normali. (timeout)\n");
     return 0;
 }

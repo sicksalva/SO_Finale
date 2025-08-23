@@ -316,6 +316,11 @@ int main()
             // Sospendi l'esecuzione fino a quando non arriva un segnale
             sigsuspend(&wait_mask);
             
+            // Se il segnale era di terminazione, esci dal loop
+            if (!running) {
+                continue;
+            }
+            
             // Dopo aver ricevuto il segnale, attendi anche sul semaforo SEM_DAY_START
             struct sembuf sem_wait;
             sem_wait.sem_num = SEM_DAY_START;

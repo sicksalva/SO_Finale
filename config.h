@@ -14,7 +14,7 @@
 #define WORK_DAY_HOURS 8
 #define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minutes
 #define DAY_SIMULATION_TIME 5   
-#define SIM_DURATION 5          // Total number of days to simulate
+#define SIM_DURATION 1          // Total number of days to simulate
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Total seconds before timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanoseconds per simulated minute
 #define BREAK_PROBABILITY 0 //Probability of taking a break (%)
