@@ -13,8 +13,6 @@
 #include <sys/msg.h>
 #include <string.h>
 #include <errno.h>
-#include <sys/wait.h>
-#include <stdbool.h>
 
 // Global variables
 int user_id;
