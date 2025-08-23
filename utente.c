@@ -287,14 +287,12 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
             // Timeout: controlliamo lo stato direttamente in caso di segnale perso
             if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
             {
-                // Usa il tempo di attesa già calcolato dall'operatore (più preciso)
-                long wait_time_ns = shm_ptr->ticket_requests[request_index].wait_time_ns;
-                
                 // Le statistiche sui tempi di attesa sono già aggiornate dall'operatore
                 // Non è necessario aggiornare nuovamente qui
                 
                 //printf("\t[UTENTE %d] Ticket %s ricevuto con successo per il servizio %s (controllo manuale) dopo %.2f secondi\n", 
-                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], wait_time_ns / 1000000000.0);
+                //       user_id, shm_ptr->ticket_requests[request_index].ticket_id, SERVICE_NAMES[service_id], 
+                //       shm_ptr->ticket_requests[request_index].wait_time_ns / 1000000000.0);
                 
                 // Sblocca i segnali prima di uscire
                 sigprocmask(SIG_UNBLOCK, &wait_set, NULL);

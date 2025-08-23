@@ -367,8 +367,8 @@ int serve_customer(int assigned_counter)
 
         // Registra il tempo di fine servizio e calcola la durata reale in secondi
         gettimeofday(&end_time, NULL);
-        double service_duration_sec = (end_time.tv_sec - start_time.tv_sec) +
-                                      (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
+        //double service_duration_sec = (end_time.tv_sec - start_time.tv_sec) +
+        //                              (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
 
         // Registra anche il tempo di fine per le statistiche sui tempi di servizio
         struct timespec end_service_time;
