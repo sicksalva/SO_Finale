@@ -227,22 +227,17 @@ void handle_explode_condition(SharedMemory *shm) {
 
 // Funzione per contare i ticket rimasti in coda alla fine della giornata
 void count_remaining_tickets(SharedMemory *shm) {
-    // Conta tutti i ticket che sono in stato REQUEST_COMPLETED (hanno ricevuto il ticket)
-    // ma che NON sono stati serviti con successo
     for (int i = 0; i < MAX_REQUESTS; i++) {
         TicketRequest *ticket = &shm->ticket_requests[i];
         
-        // Se il ticket è stato completato (ha ricevuto un numero/ID)
-        // ma NON è stato servito con successo, lo contiamo come "non servito"
+        // Ticket ricevuto ma non servito con successo
         if (ticket->status == REQUEST_COMPLETED && !ticket->served_successfully) {
             
-            // Questo ticket ha ricevuto un numero ma non è stato completamente servito
-            // Lo contiamo come "non servito per mancanza di tempo"
             shm->daily_users_timeout[ticket->service_id]++;
             shm->total_users_timeout++;
             
-            //printf("[CONTEGGIO] Ticket %s (utente #%d) non servito entro fine giornata - contato come interrotto\n", 
-            //       ticket->ticket_id, ticket->user_id);
+            // DEBUG: stampa conteggio
+            //printf("[CONTEGGIO] Ticket %s (utente #%d) non servito entro fine giornata - contato come interrotto\n", ticket->ticket_id, ticket->user_id);
         }
     }
 }
@@ -254,8 +249,8 @@ void clear_all_queues_at_day_end(SharedMemory *shm) {
     // Svuota tutte le code dei servizi
     for (int service = 0; service < SERVICE_COUNT; service++) {
         if (shm->service_tickets_waiting[service] > 0) {
-            printf("[RESET] Servizio %s: %d ticket non serviti scartati\n", 
-                   SERVICE_NAMES[service], shm->service_tickets_waiting[service]);
+            // DEBUG: stampa quanti e quali ticket vengono scartati
+            //printf("[RESET] Servizio %s: %d ticket non serviti scartati\n", SERVICE_NAMES[service], shm->service_tickets_waiting[service]);
         }
         
         // Reset delle code per questo servizio
@@ -267,9 +262,6 @@ void clear_all_queues_at_day_end(SharedMemory *shm) {
         memset(shm->service_queues[service], 0, MAX_SERVICE_QUEUE * sizeof(int));
     }
     
-    // Reset del contatore generale delle richieste per il giorno successivo
-    // (ma mantieniamo le richieste nella memoria per le statistiche)
-    printf("[RESET] Tutte le code sono state svuotate. Il giorno successivo ripartirà con code vuote.\n");
 }
 
 // Funzione per stampare il riepilogo giornaliero
@@ -322,6 +314,7 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
         daily_services_not_provided += service_not_provided;
         
         // Raccoglie statistiche per servizio per questo giorno
+        // usa una matrice 2D [servizio][giorno]
         shm->users_served_per_service_per_day[i][day_index] = shm->daily_tickets_served[i];
         shm->services_not_provided_per_service_per_day[i][day_index] = service_not_provided;
         shm->total_wait_time_per_service_per_day[i][day_index] = shm->total_wait_time[i];
@@ -349,14 +342,14 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
     int daily_total_pauses = 0;
     
     for (int i = 0; i < NOF_WORKERS; i++) {
+        // Conto le pause degli operatori attivi
         if (shm->operators[i].active && shm->operators[i].total_served > 0) {
             daily_operators_active++;
         }
         daily_total_pauses += shm->operators[i].total_pauses;
     }
     
-    // CORREZIONE: Le pause per giorno dovrebbero essere solo quelle del giorno corrente
-    // Per ora salviamo il totale cumulativo, ma nella stampa calcoleremo la differenza
+    // Calcola le pause di un giorno (pause totale - pause fino a ieri)
     int pauses_for_this_day_only = daily_total_pauses;
     if (day_index > 0) {
         pauses_for_this_day_only = daily_total_pauses - shm->total_pauses_simulation;
@@ -388,17 +381,14 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
     shm->cumulative_avg_services_provided[day_index] = (double)shm->total_services_provided_simulation / (day_index + 1);
     shm->cumulative_avg_services_not_provided[day_index] = (double)shm->total_services_not_provided_simulation / (day_index + 1);
     
-    printf("[STATISTICHE] Giorno %d: %d utenti serviti, %d servizi non erogati, %d operatori attivi, %d pause\n",
-           day_index + 1, shm->total_tickets_served, daily_services_not_provided, daily_operators_active, daily_total_pauses);
 }
 
 // Funzione per convertire nanosecondi in minuti simulati
 double nanoseconds_to_simulated_minutes(long nanoseconds) {
-    // Converte nanosecondi in secondi reali
+    
     double real_seconds = nanoseconds / 1000000000.0;
     
     // Converte secondi reali in minuti simulati
-    // DAY_SIMULATION_TIME secondi reali = WORK_DAY_MINUTES minuti simulati
     double simulated_minutes = (real_seconds / DAY_SIMULATION_TIME) * WORK_DAY_MINUTES;
     
     return simulated_minutes;
@@ -426,12 +416,6 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
             total_service_count_service += shm->service_count_per_service_per_day[i][day];
         }
         
-        // Calcola la media del tempo di servizio per tutta la simulazione
-        double avg_service_time_simulation = 0;
-        if (total_service_count_service > 0) {
-            avg_service_time_simulation = (double)total_service_time_service / total_service_count_service / 1000000000.0; // Converti in secondi
-        }
-        
         // Calcola la media del tempo di servizio per l'ultimo giorno
         double avg_service_time_daily = 0;
         int last_day = days_completed - 1;
@@ -440,6 +424,12 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
                                    shm->service_count_per_service_per_day[i][last_day] / 1000000000.0;
         }
         
+        // Calcola la media del tempo di servizio per tutta la simulazione
+        double avg_service_time_simulation = 0;
+        if (total_service_count_service > 0) {
+            avg_service_time_simulation = (double)total_service_time_service / total_service_count_service / 1000000000.0; // Converti in secondi
+        }
+
         double min_service_time_sec = shm->min_service_time[i] == LONG_MAX ? 0 : shm->min_service_time[i] / 1000000000.0;
         double max_service_time_sec = shm->max_service_time[i] / 1000000000.0;
         
