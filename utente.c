@@ -76,8 +76,8 @@ int determine_arrival_and_service()
 // Function to calculate arrival time in minutes (between 0 and WORK_DAY_MINUTES)
 int determine_arrival_time()
 {
-    //return 1;
-    return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
+    return 1;
+    //return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
 }
 
 // Convert simulated minutes to real-world seconds

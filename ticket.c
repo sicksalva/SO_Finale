@@ -29,7 +29,6 @@ int msgid = -1;
 // Signal handler for termination
 void termination_handler(int signum __attribute__((unused)))
 {
-    printf("Ticket: Received signal %d, shutting down...\n", signum);
     running = 0;
 }
 

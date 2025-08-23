@@ -21,12 +21,12 @@
 
 // Simulation parameters
 #define NOF_WORKERS 10         // Number of operator processes
-#define NOF_USERS 400         // Reduced to a more manageable number for system resources
+#define NOF_USERS 200         // Reduced to a more manageable number for system resources
 #define NOF_WORKER_SEATS 10
 #define NOF_PAUSE 3
 #define P_SERV_MIN 1       // 30% minimum probability
 #define P_SERV_MAX 1       // 80% maximum probability
-#define EXPLODE_THRESHOLD 3000
+#define EXPLODE_THRESHOLD 500
 
 // Working hours (in minutes from start of day)
 #define OFFICE_OPEN_TIME 0      // Office opens at start of day

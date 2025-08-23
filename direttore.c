@@ -59,6 +59,7 @@ void cleanup_handler(int signum __attribute__((unused))) {
         if (msgctl(msgid, IPC_RMID, NULL) == -1) {
             perror("Failed to remove message queue");
         } else {
+            // Messaggio Debug:
             //printf("Message queue removed successfully\n");
         }
     }
@@ -84,20 +85,18 @@ void cleanup_handler(int signum __attribute__((unused))) {
     exit(EXIT_SUCCESS);
 }
 
-
-
+// Timeout handler
 void handle_timeout(int signum __attribute__((unused))) {
     printf("Simulation timeout reached. Cleaning up...\n");
     
-    // Notify all processes to terminate
+    // Notifica tutti i processi di terminare
     for (int i = 0; i < NOF_USERS; i++) {
         if (shared_memory->user_pids[i] > 0) {
             kill(shared_memory->user_pids[i], SIGTERM);
         }
     }
     
-    // Clean up resources using the existing cleanup handler
-    cleanup_handler(0); // Pass 0 as dummy signum
+    cleanup_handler(0); // Passa 0 come dummy signum
 }
 
 void create_users(SharedMemory *shm_ptr)
@@ -107,7 +106,7 @@ void create_users(SharedMemory *shm_ptr)
         pid_t user_pid = fork();
         if (user_pid == 0)
         {
-            // Child process
+            // Processi figli
             char user_id[10];
             sprintf(user_id, "%d", i);
             execl("./utente", "./utente", user_id, NULL);
@@ -132,7 +131,7 @@ void create_ticket_process(SharedMemory *shm_ptr)
     pid_t ticket_pid = fork();
     if (ticket_pid == 0)
     {
-        // Child process
+        // Processi figli
         execl("./ticket", "./ticket", NULL);
         perror("execl failed for ticket");
         exit(EXIT_FAILURE);
@@ -153,20 +152,20 @@ void create_operators(SharedMemory *shm_ptr)
 {
     printf("Creating %d operators...\n", NOF_WORKERS);
 
-    // Initialize base operator data
+    // Inizializza gli operatori in memoria condivisa
     for (int i = 0; i < NOF_WORKERS; i++) {
         shm_ptr->operators[i].active = 1;
         shm_ptr->operators[i].total_served = 0;
         shm_ptr->operators[i].total_pauses = 0;
     }
 
-    // Create operator processes
+    // Crea i processi operatore
     for (int i = 0; i < NOF_WORKERS; i++)
     {
         pid_t operator_pid = fork();
         if (operator_pid == 0)
         {
-            // Child process
+            // Processi figli
             char operator_id[10];
             sprintf(operator_id, "%d", i);
             execl("./operatore", "./operatore", operator_id, NULL);
@@ -188,31 +187,42 @@ void create_operators(SharedMemory *shm_ptr)
     printf("All operators created successfully.\n");
 }
 
-// Initialize counters for a new day with random distribution of services
+// Inizializza gli sportelli con servizi casuali all'inizio di ogni giornata
 void initialize_counters_for_day(SharedMemory *shm_ptr)
 {
-    printf("Initializing %d counters with random services for day %d...\n",
-           NOF_WORKER_SEATS, shm_ptr->simulation_day);
-
-    // Distribuzione casuale: ogni sportello ha un servizio assegnato casualmente
-    // Inizializza il generatore di numeri casuali
+    // Generatore di numeri casuali
     srand(time(NULL) ^ shm_ptr->simulation_day);
     
     for (int counter_idx = 0; counter_idx < NOF_WORKER_SEATS; counter_idx++) {
         // Genera un servizio casuale
         int random_service = rand() % SERVICE_COUNT;
         
-        // Initialize counter
+        // Inizializza lo sportello
         shm_ptr->counters[counter_idx].active = 1;
         shm_ptr->counters[counter_idx].current_service = random_service;
         shm_ptr->counters[counter_idx].operator_pid = 0;
         shm_ptr->counters[counter_idx].total_served = 0;
         
-        printf("Counter %d: Service %s (%d)\n", 
+        printf("Sportello %d: Servizio %s (%d)\n", 
                counter_idx, SERVICE_NAMES[random_service], random_service);
     }
 
     printf("All counters initialized for day %d.\n", shm_ptr->simulation_day);
+}
+
+// Funzione per gestire la condizione di "esplosione"
+void handle_explode_condition(SharedMemory *shm) {
+    int total_waiting_users = 0;
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        total_waiting_users += shm->service_tickets_waiting[i];
+    }
+
+    if (total_waiting_users > EXPLODE_THRESHOLD) {
+        printf("\n\n[EXPLODE] Il numero totale di utenti in coda (%d) ha superato la soglia di %d.\nLa simulazione termina per congestione eccessiva.\n\n", total_waiting_users, EXPLODE_THRESHOLD);
+        
+        // Trigger cleanup e terminazione
+        cleanup_handler(0);
+    }
 }
 
 // Funzione per contare i ticket rimasti in coda alla fine della giornata
@@ -673,7 +683,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
     printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
     printf("|      Servizio        | Tempo    | Tempo    | Tempo    | Tempo    | Tempo    | Tempo    |\n");
     printf("|                      | Min      | Min      | Max      | Max      | Medio    | Medio    |\n");
-    printf("|                      | (ms)     | (min)    | (ms)     | (min)    | (ms)     | (min)    |\n");
+    printf("|                      | (ms)     | (minuti) | (ms)     | (minuti) | (ms)     | (minuti) |\n");
     printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
     
     long overall_min_wait = LONG_MAX;
@@ -950,7 +960,7 @@ int main()
         // Start the day simulation
         printf("Simulating workday for day %d (duration: %d seconds)...\n", day + 1, DAY_SIMULATION_TIME);
         
-        // Invece dell'attesa attiva, usiamo alarm per attendere esattamente DAY_SIMULATION_TIME
+        // Usiamo alarm per attendere esattamente DAY_SIMULATION_TIME
         int elapsed_seconds = 0;
         while (elapsed_seconds < DAY_SIMULATION_TIME) {
             // Resetta il flag alarm_triggered
@@ -983,6 +993,9 @@ int main()
             if (elapsed_seconds % 1 == 0) {
                 printf("Day %d in progress: %d seconds elapsed\n", day + 1, elapsed_seconds);
             }
+
+            // Check for explode condition
+            handle_explode_condition(shared_memory);
         }
         
         printf("Day %d completed after %d seconds.\n", day + 1, DAY_SIMULATION_TIME);
