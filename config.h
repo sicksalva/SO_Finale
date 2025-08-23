@@ -20,7 +20,7 @@
 #define BREAK_PROBABILITY 0 //Probability of taking a break (%)
 
 // Simulation parameters
-#define NOF_WORKERS 1         // Number of operator processes
+#define NOF_WORKERS 10         // Number of operator processes
 #define NOF_USERS 200         // Reduced to a more manageable number for system resources
 #define NOF_WORKER_SEATS 10
 #define NOF_PAUSE 3

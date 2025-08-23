@@ -399,9 +399,9 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
     printf("\n+----------------------+----------+----------+----------+----------+----------+----------+\n");
     printf("| STATISTICHE TEMPI DI SERVIZIO                                                          |\n");
     printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
-    printf("|      Servizio        | Tempo    | Tempo    | Tempo    | Tempo    | Tempo    | Tempo    |\n");
-    printf("|                      | Serv.    | Serv.    | Serv.    | Serv.    | Minimo   | Massimo  |\n");
-    printf("|                      | Medio    | Medio    | Medio    | Medio    | Giorno   | Giorno   |\n");
+    printf("|      Servizio        | Tempo    | Tempo    | Tempo    | Tempo    | Minimo   | Massimo  |\n");
+    printf("|                      | Serv.    | Serv.    | Serv.    | Serv.    | Giorno   | Giorno   |\n");
+    printf("|                      | Medio    | Medio    | Medio    | Medio    |          |          |\n");
     printf("|                      | Giorno   | Simul.   | Giorno   | Simul.   |          |          |\n");
     printf("|                      | (Sec)    | (Sec)    | (Min)    | (Min)    | (Sec)    | (Sec)    |\n");
     printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
@@ -743,86 +743,90 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
     printf("================================================================================\n");
 }
 
+// Funzione per inizializzare le variabili statistiche
+void initialize_statistics(SharedMemory *shm) {
+    // Inizializza le variabili per la simulazione (attesa)
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        shm->min_wait_time[i] = LONG_MAX;
+        shm->max_wait_time[i] = 0;
+        shm->total_wait_time[i] = 0;
+        shm->wait_count[i] = 0;
+        
+        // Inizializza le statistiche tempi (servizio)
+        shm->min_service_time[i] = LONG_MAX;
+        shm->max_service_time[i] = 0;
+        shm->total_service_time[i] = 0;
+        shm->service_count[i] = 0;
+        
+        // Inizializza gli array delle statistiche giornaliere
+        for (int day = 0; day < SIM_DURATION; day++) {
+            shm->users_served_per_service_per_day[i][day] = 0;
+            shm->services_not_provided_per_service_per_day[i][day] = 0;
+            shm->total_wait_time_per_service_per_day[i][day] = 0;
+            shm->wait_count_per_service_per_day[i][day] = 0;
+            shm->total_service_time_per_service_per_day[i][day] = 0;
+            shm->service_count_per_service_per_day[i][day] = 0;
+        }
+    }
+    
+    // Inizializza le statistiche aggregate per la simulazione
+    shm->total_users_served_simulation = 0;
+    shm->total_services_provided_simulation = 0;
+    shm->total_services_not_provided_simulation = 0;
+    shm->total_pauses_simulation = 0;
+    
+    // Inizializza le somme totali degli operatori attivi per servizio
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        shm->operators_active_per_service_total[i] = 0;
+    }
+    
+    // Inizializza gli array delle statistiche giornaliere aggregate
+    for (int day = 0; day < SIM_DURATION; day++) {
+        shm->users_served_per_day[day] = 0;
+        shm->services_not_provided_per_day[day] = 0;
+        shm->total_wait_time_per_day[day] = 0;
+        shm->wait_count_per_day[day] = 0;
+        shm->total_service_time_per_day[day] = 0;
+        shm->service_count_per_day[day] = 0;
+        shm->pauses_per_day[day] = 0;
+        shm->operators_active_per_day[day] = 0;
+        
+        // Inizializza le medie cumulative
+        shm->cumulative_avg_users_served[day] = 0.0;
+        shm->cumulative_avg_services_provided[day] = 0.0;
+        shm->cumulative_avg_services_not_provided[day] = 0.0;
+    }
+}
+
 int main()
 {
-    // Set up signal handlers for cleanup
-    signal(SIGINT, cleanup_handler);   // Catch Ctrl+C
-    signal(SIGTERM, cleanup_handler);  // Catch termination signals (e.g., from kill command)
-    signal(SIGALRM, alarm_handler);    // Setup alarm handler for day timing
+    // Imposta i gestori dei segnali
+    signal(SIGINT, cleanup_handler);   // Ctrl+C
+    signal(SIGTERM, cleanup_handler);  // Terminazione forzata
+    signal(SIGALRM, alarm_handler);    // Allarme per fine giornata simulata
 
-    // Initialize shared memory using the fixed key
-    // Use the global shmid variable
+    // Inizializza la memoria condivisa con una chiave fissa
     shmid = shmget(SHM_KEY, SHM_SIZE, IPC_CREAT | 0666);
     if (shmid < 0)
     {
         perror("shmget");
-        // No need for sem cleanup here as semid is not set yet
         exit(EXIT_FAILURE);
     }
 
-    // Attach shared memory
+    // Attacca la memoria condivisa
     shared_memory = (SharedMemory *)shmat(shmid, NULL, 0);
     if (shared_memory == (void *)-1)
     {
         perror("shmat");
-        shmctl(shmid, IPC_RMID, NULL); // Clean up shm
+        shmctl(shmid, IPC_RMID, NULL);
         exit(EXIT_FAILURE);
     }
     
     // Inizializza la memoria condivisa
     memset(shared_memory, 0, sizeof(SharedMemory)); // Azzera tutta la memoria condivisa
     
-    // Inizializza specificamente le statistiche sui tempi di attesa
-    for (int i = 0; i < SERVICE_COUNT; i++) {
-        shared_memory->min_wait_time[i] = LONG_MAX; // Valore massimo possibile
-        shared_memory->max_wait_time[i] = 0;
-        shared_memory->total_wait_time[i] = 0;
-        shared_memory->wait_count[i] = 0;
-        
-        // Inizializza le statistiche sui tempi di servizio
-        shared_memory->min_service_time[i] = LONG_MAX;
-        shared_memory->max_service_time[i] = 0;
-        shared_memory->total_service_time[i] = 0;
-        shared_memory->service_count[i] = 0;
-        
-        // Inizializza gli array delle statistiche giornaliere
-        for (int day = 0; day < SIM_DURATION; day++) {
-            shared_memory->users_served_per_service_per_day[i][day] = 0;
-            shared_memory->services_not_provided_per_service_per_day[i][day] = 0;
-            shared_memory->total_wait_time_per_service_per_day[i][day] = 0;
-            shared_memory->wait_count_per_service_per_day[i][day] = 0;
-            shared_memory->total_service_time_per_service_per_day[i][day] = 0;
-            shared_memory->service_count_per_service_per_day[i][day] = 0;
-        }
-    }
-    
-    // Inizializza le statistiche aggregate per la simulazione
-    shared_memory->total_users_served_simulation = 0;
-    shared_memory->total_services_provided_simulation = 0;
-    shared_memory->total_services_not_provided_simulation = 0;
-    shared_memory->total_pauses_simulation = 0;
-    
-    // Inizializza le somme totali degli operatori attivi per servizio
-    for (int i = 0; i < SERVICE_COUNT; i++) {
-        shared_memory->operators_active_per_service_total[i] = 0;
-    }
-    
-    // Inizializza gli array delle statistiche giornaliere aggregate
-    for (int day = 0; day < SIM_DURATION; day++) {
-        shared_memory->users_served_per_day[day] = 0;
-        shared_memory->services_not_provided_per_day[day] = 0;
-        shared_memory->total_wait_time_per_day[day] = 0;
-        shared_memory->wait_count_per_day[day] = 0;
-        shared_memory->total_service_time_per_day[day] = 0;
-        shared_memory->service_count_per_day[day] = 0;
-        shared_memory->pauses_per_day[day] = 0;
-        shared_memory->operators_active_per_day[day] = 0;
-        
-        // Inizializza le medie cumulative
-        shared_memory->cumulative_avg_users_served[day] = 0.0;
-        shared_memory->cumulative_avg_services_provided[day] = 0.0;
-        shared_memory->cumulative_avg_services_not_provided[day] = 0.0;
-    }
+    // Inizializza le variabili statistiche
+    initialize_statistics(shared_memory);
 
     // Initialize semaphore using the fixed key
     semid = semget(SEM_KEY, NUM_SEMS, IPC_CREAT | 0666);

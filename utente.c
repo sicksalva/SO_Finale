@@ -337,31 +337,33 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
     return -1;
 }
 
-// Funzione per verificare se un servizio è realmente disponibile
-bool is_service_available(SharedMemory *shm, int service_id) {
-    // Controlla se c'è almeno uno sportello attivo per il servizio richiesto
-    bool counter_available = false;
-    for (int i = 0; i < NOF_WORKER_SEATS; i++) {
-        if (shm->counters[i].active && shm->counters[i].current_service == (ServiceType)service_id) {
-            counter_available = true;
-            break;
+// Funzione per verificare se un servizio è effettivamente disponibile (sportello + operatore)
+int is_service_available(SharedMemory *shm, int service_id)
+{
+    // Itera su tutti gli sportelli
+    for (int i = 0; i < NOF_WORKER_SEATS; i++)
+    {
+        // Controlla se lo sportello è attivo e assegnato al servizio richiesto
+        if (shm->counters[i].active && shm->counters[i].current_service == (ServiceType)service_id)
+        {
+            // Se lo sportello è attivo per il servizio, controlla se c'è un operatore assegnato
+            if (shm->counters[i].operator_pid > 0)
+            {
+                // Itera su tutti gli operatori per trovare quello assegnato
+                for (int j = 0; j < NOF_WORKERS; j++)
+                {
+                    // Controlla se l'operatore è attivo e corrisponde al PID nello sportello
+                    if (shm->operators[j].active && shm->operators[j].pid == shm->counters[i].operator_pid)
+                    {
+                        // L'assegnazione dello sportello implica la competenza, quindi se troviamo
+                        // un operatore attivo assegnato, il servizio è disponibile.
+                        return 1; // Trovato sportello attivo con operatore.
+                    }
+                }
+            }
         }
     }
-
-    if (!counter_available) {
-        return false; // Nessuno sportello per questo servizio
-    }
-
-    // Controlla se c'è almeno un operatore disponibile per quel servizio
-    for (int i = 0; i < NOF_WORKERS; i++) {
-        // Un operatore è disponibile se è attivo e o serve quel servizio o è in attesa di un utente
-        if (shm->operators[i].active && 
-            (shm->operators[i].current_service == (ServiceType)service_id || shm->operators[i].status == OPERATOR_WAITING)) {
-            return true; // Trovato un operatore disponibile
-        }
-    }
-
-    return false; // Nessun operatore disponibile per questo servizio
+    return 0; // Nessuno sportello attivo con operatore trovato per questo servizio.
 }
 
 int main(int argc, char *argv[])
