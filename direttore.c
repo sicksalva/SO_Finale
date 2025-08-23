@@ -798,6 +798,48 @@ void initialize_statistics(SharedMemory *shm) {
     }
 }
 
+// Funzione per inizializzare i semafori
+void initialize_semaphores(int semid, int shmid, SharedMemory *shm) {
+    // Inizializza i valori iniziali dei semafori
+    unsigned short init_values[NUM_SEMS];
+    init_values[SEM_MUTEX] = 1;         // Mutex per accesso alla memoria condivisa
+    init_values[SEM_QUEUE] = 1;         // Mutex per accesso alla coda
+    init_values[SEM_TICKET_REQ] = 0;    // Imposto a 0, ticket richiesti
+    init_values[SEM_TICKET_READY] = 0;  // Imposto a 0, ticket pronti
+    init_values[SEM_COUNTERS] = 1;      // Mutex per accesso agli sportelli
+    init_values[SEM_SYNC] = 0;          // Sincronizzazione inizio giornata
+    init_values[SEM_DAY_START] = 0;     // Giorno inizio segnalazione
+    init_values[SEM_TICKET_WAIT] = 0;   // Mutex per attesa ticket
+    
+    // Inizializza i semafori di lock per i servizi (tutti sbloccati all'inizio)
+    init_values[SEM_SERVICE_LOCK_PACKAGES] = 1;   // Pacchi sbloccato
+    init_values[SEM_SERVICE_LOCK_LETTERS] = 1;    // Lettere sbloccato
+    init_values[SEM_SERVICE_LOCK_BANCOPOST] = 1;  // Bancoposta sbloccato
+    init_values[SEM_SERVICE_LOCK_BILLS] = 1;      // Bollette sbloccato
+    init_values[SEM_SERVICE_LOCK_FINANCIAL] = 1;  // Finanza sbloccato
+    init_values[SEM_SERVICE_LOCK_WATCHES] = 1;    // Orologi sbloccato
+
+    // Inizializza la struttura per semctl
+    union semun
+    {
+        int val;
+        struct semid_ds *buf;
+        unsigned short *array;
+        struct seminfo *__buf;
+    } arg;
+    arg.array = init_values;
+
+    if (semctl(semid, 0, SETALL, arg) == -1)
+    {
+        perror("semctl SETALL failed");
+        // Pulizia in caso di errore
+        semctl(semid, 0, IPC_RMID);
+        shmdt(shm);
+        shmctl(shmid, IPC_RMID, NULL);
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main()
 {
     // Imposta i gestori dei segnali
@@ -838,44 +880,8 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    // Initialize semaphores
-    unsigned short init_values[NUM_SEMS];
-    init_values[SEM_MUTEX] = 1;         // Mutex starts unlocked
-    init_values[SEM_QUEUE] = 1;         // Queue access mutex
-    init_values[SEM_TICKET_REQ] = 0;    // No requests initially
-    init_values[SEM_TICKET_READY] = 0;  // No tickets ready initially
-    init_values[SEM_COUNTERS] = 1;      // Counter access mutex
-    init_values[SEM_SYNC] = 0;          // Synchronization primitive
-    init_values[SEM_DAY_START] = 0;     // Day start synchronization (starts at 0)
-    init_values[SEM_TICKET_WAIT] = 0;   // Ticket wait synchronization
-    
-    // Initialize all service-specific semaphores (one per service type)
-    init_values[SEM_SERVICE_LOCK_PACKAGES] = 1;   // Packages service lock (starts unlocked)
-    init_values[SEM_SERVICE_LOCK_LETTERS] = 1;    // Letters service lock (starts unlocked)
-    init_values[SEM_SERVICE_LOCK_BANCOPOST] = 1;  // Bancopost service lock (starts unlocked)
-    init_values[SEM_SERVICE_LOCK_BILLS] = 1;      // Bills service lock (starts unlocked)
-    init_values[SEM_SERVICE_LOCK_FINANCIAL] = 1;  // Financial service lock (starts unlocked)
-    init_values[SEM_SERVICE_LOCK_WATCHES] = 1;    // Watches service lock (starts unlocked)
-
-    // Initialize semaphores with initial values
-    union semun
-    {
-        int val;
-        struct semid_ds *buf;
-        unsigned short *array;
-        struct seminfo *__buf;
-    } arg;
-    arg.array = init_values;
-
-    if (semctl(semid, 0, SETALL, arg) == -1)
-    {
-        perror("semctl SETALL failed");
-        // Clean up semaphores and shared memory on failure
-        semctl(semid, 0, IPC_RMID);
-        shmdt(shared_memory);
-        shmctl(shmid, IPC_RMID, NULL);
-        exit(EXIT_FAILURE);
-    }
+    // Inizializza i semafori
+    initialize_semaphores(semid, shmid, shared_memory);
 
     // Create child processes
     create_ticket_process(shared_memory);
