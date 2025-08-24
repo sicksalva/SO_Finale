@@ -24,8 +24,8 @@
 #define NOF_USERS 200         // Reduced to a more manageable number for system resources
 #define NOF_WORKER_SEATS 10
 #define NOF_PAUSE 3
-#define P_SERV_MIN 1       // 30% minimum probability
-#define P_SERV_MAX 1       // 80% maximum probability
+#define P_SERV_MIN 100            // da 0 a 100!!! Non è decimale
+#define P_SERV_MAX 100       
 #define EXPLODE_THRESHOLD 500
 
 // Working hours (in minutes from start of day)
