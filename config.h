@@ -14,7 +14,7 @@
 #define WORK_DAY_HOURS 8
 #define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minutes
 #define DAY_SIMULATION_TIME 5   
-#define SIM_DURATION 1          // Total number of days to simulate
+#define SIM_DURATION 5          // Total number of days to simulate
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Total seconds before timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanoseconds per simulated minute
 #define BREAK_PROBABILITY 0 //Probability of taking a break (%)
@@ -23,7 +23,7 @@
 #define NOF_WORKERS 10         // Number of operator processes
 #define NOF_USERS 200         // Reduced to a more manageable number for system resources
 #define NOF_WORKER_SEATS 10
-#define NOF_PAUSE 3
+#define NOF_PAUSE 5
 #define P_SERV_MIN 100            // da 0 a 100!!! Non è decimale
 #define P_SERV_MAX 100       
 #define EXPLODE_THRESHOLD 500
@@ -171,7 +171,6 @@ typedef struct TicketRequest {
     int service_id;             // Servizio richiesto
     struct timespec request_time;       // Timestamp preciso della richiesta (nanosecondi)
     struct timespec service_start_time; // Timestamp preciso di quando inizia il servizio
-    struct timespec service_end_time;   // Timestamp preciso di quando finisce il servizio
     RequestStatus status;       // Stato attuale della richiesta
     int ticket_number;          // Numero del ticket assegnato (progressivo per servizio)
     char ticket_id[10];         // Identificativo del ticket (es. "L5", "B12")
@@ -339,6 +338,9 @@ typedef struct {
     
     // Somma totale degli operatori attivi per servizio durante tutta la simulazione
     int operators_active_per_service_total[SERVICE_COUNT];
+
+    // Somma totale delle pause di tutti gli operatori
+    int total_pauses_global;
 
 } SharedMemory;
 

@@ -10,25 +10,23 @@
 #include <sys/shm.h>
 #include <sys/ipc.h>
 #include <sys/sem.h>
-#include <string.h>
 #include <errno.h>
-#include <sys/wait.h>
 
 SharedMemory *shm_ptr = NULL;
 int operator_id;
 int semid = -1;
 int running = 1;
 int day_in_progress = 0;
-volatile sig_atomic_t alarm_triggered = 0; // Flag per il segnale di alarm
 
-ServiceType random_service; // Variabile globale per il servizio assegnato
+// Servizio assegnato casualmente all'operatore (FISSO)
+ServiceType random_service; 
 
-// Funzione helper per operazioni sui semafori con gestione degli interrupt
+// Gestisce gli interrupt dei semafori
 int safe_semop(int semid, struct sembuf *sops, size_t nsops) {
     int result;
     while ((result = semop(semid, sops, nsops)) < 0) {
         if (errno == EINTR) {
-            // Operazione interrotta da segnale, riprova
+            // Interrupt
             continue;
         } else {
             // Errore reale
@@ -38,12 +36,7 @@ int safe_semop(int semid, struct sembuf *sops, size_t nsops) {
     return result;
 }
 
-// Handler per il segnale di alarm (per evitare deadlock)
-void alarm_handler(int signum __attribute__((unused))) {
-    alarm_triggered = 1; // Segnala che il timer è scaduto
-}
-
-// Funzione per cercare operatori disponibili e assegnarli agli sportelli liberi
+// Assegna operatore a sportello (PAUSA)
 void try_assign_available_operators()
 {
     // Acquisire il mutex per l'accesso agli sportelli e operatori
@@ -52,8 +45,9 @@ void try_assign_available_operators()
     sem_op.sem_op = -1; // Lock
     sem_op.sem_flg = 0;
     
+    // Errore lock: esci
     if (semop(semid, &sem_op, 1) < 0) {
-        return; // Se non riusciamo ad acquisire il lock, evitiamo deadlock
+        return;
     }
     
     // Cerca sportelli liberi
@@ -63,7 +57,7 @@ void try_assign_available_operators()
             
             ServiceType counter_service = shm_ptr->counters[counter_id].current_service;
             
-            // Cerca un operatore disponibile per questo servizio
+            // Cerca operatore
             for (int op_id = 0; op_id < NOF_WORKERS; op_id++) {
                 if (shm_ptr->operators[op_id].active &&
                     shm_ptr->operators[op_id].current_service == counter_service &&
@@ -73,8 +67,8 @@ void try_assign_available_operators()
                     shm_ptr->counters[counter_id].operator_pid = shm_ptr->operators[op_id].pid;
                     shm_ptr->operators[op_id].status = OPERATOR_WORKING;
                     
-                    printf("[RIASSEGNAZIONE] Operatore %d (PID %d) assegnato allo sportello %d per il servizio %s\n",
-                           op_id, shm_ptr->operators[op_id].pid, counter_id, SERVICE_NAMES[counter_service]);
+                    // DEDBUG: Stampa riassegnazione
+                    printf("[RIASSEGNAZIONE] Operatore %d (PID %d) assegnato allo sportello %d per il servizio %s\n",op_id, shm_ptr->operators[op_id].pid, counter_id, SERVICE_NAMES[counter_service]);
                     
                     // Sveglia l'operatore con un segnale SIGUSR1
                     kill(shm_ptr->operators[op_id].pid, SIGUSR1);
@@ -89,32 +83,20 @@ void try_assign_available_operators()
     semop(semid, &sem_op, 1);
 }
 
-// Funzione per visualizzare le code degli utenti alla fine della 
-// Funzione per calcolare un tempo di servizio casuale nell'intorno di ±50% del valore standard
+// Calcola tempo servizio con intorno ±50%
 long calculate_random_service_time(ServiceType service)
 {
-    // Migliora il seeding per evitare valori ripetuti
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    
-    // Combina più fonti di entropia per un seed più robusto
-    static int call_count = 0;
-    call_count++;
-    unsigned int seed = ts.tv_nsec ^ getpid() ^ (operator_id << 16) ^ (call_count << 8) ^ time(NULL);
-    srand(seed);
-    
-    // Chiama rand() più volte per "mescolare" il generatore
+    // Cicla rand per migliorare casualità
     for (int i = 0; i < 3; i++) {
         rand();
     }
-    
+
     long base_time = SERVICE_TIMES[service];
 
     // Calcola una variazione casuale tra -50% e +50%
     int rand_val = rand() % 101;
     double variation = (rand_val - 50) / 100.0; // Da -0.5 a +0.5
 
-    // Applica la variazione al tempo base
     long adjusted_time = base_time * (1.0 + variation);
 
     return adjusted_time;
@@ -123,43 +105,41 @@ long calculate_random_service_time(ServiceType service)
 // Funzione per servire un utente e gestire la pausa
 int serve_customer(int assigned_counter)
 {
-    // Verifica se ci sono utenti in coda per il servizio
+    // Utenti in coda per il servizio dell'operatore
     if (shm_ptr->service_tickets_waiting[random_service] <= 0)
     {
         return 0; // Nessun utente da servire
     }
 
-    // Lock per evitare che più operatori prendano lo stesso ticket
-    // USA IL SEMAFORO SPECIFICO PER QUESTO SERVIZIO invece del semaforo globale
+    // Semaforo SPECIFICO per il servizio (lock su utente da servire)
     struct sembuf sem_lock;
-    sem_lock.sem_num = SEM_SERVICE_LOCK(random_service); // Semaforo specifico per il servizio
-    sem_lock.sem_op = -1; // Lock (P operation)
-    sem_lock.sem_flg = SEM_UNDO; // Important: auto-release if process terminates
+    sem_lock.sem_num = SEM_SERVICE_LOCK(random_service);
+    sem_lock.sem_op = -1;
+    sem_lock.sem_flg = SEM_UNDO;
     
-    // Acquisiamo il lock con retry in caso di interruzione da segnale
+    // Riprova ad acquisire il lock in caso di interruzione
     if (safe_semop(semid, &sem_lock, 1) < 0) {
         perror("[OPERATORE] Errore nell'acquisizione del lock per il ticket");
         return 0;
     }
 
-    // Ottieni il primo ticket nella coda per questo servizio
+    // Restituisce ticket da servire
     int ticket_idx = -1;
+    TicketRequest *ticket = NULL;
     if (shm_ptr->service_tickets_waiting[random_service] > 0)
     {
         int head = shm_ptr->service_queue_head[random_service];
         ticket_idx = shm_ptr->service_queues[random_service][head];
+        // Ottieni il puntatore al ticket corrispondente
+        ticket = &shm_ptr->ticket_requests[ticket_idx];
         
-        // IMPORTANTE: Rimuovi immediatamente il ticket dalla coda per evitare duplicati
         shm_ptr->service_queue_head[random_service] = (head + 1) % MAX_SERVICE_QUEUE;
         shm_ptr->service_tickets_waiting[random_service]--;
         
-        // *** OTTIMIZZAZIONE CRITICA *** 
-        // RILASCIA IMMEDIATAMENTE IL SEMAFORO dopo aver preso il ticket!
-        // Questo permette ad altri operatori dello stesso servizio di prendere ticket in parallelo
-        // mentre questo operatore esegue il servizio (che dura ~100ms)
+        // Rilascio il semaforo IMMEDIATO dopo aver preso il ticket
         struct sembuf sem_unlock_immediate;
         sem_unlock_immediate.sem_num = SEM_SERVICE_LOCK(random_service);
-        sem_unlock_immediate.sem_op = 1; // Unlock (V operation)
+        sem_unlock_immediate.sem_op = 1;
         sem_unlock_immediate.sem_flg = 0;
         if (safe_semop(semid, &sem_unlock_immediate, 1) < 0) {
             perror("[OPERATORE] Errore nel rilascio immediato del lock per il ticket");
@@ -167,50 +147,44 @@ int serve_customer(int assigned_counter)
     }
     else
     {
-        // Rilascia il lock se non ci sono ticket disponibili dopo il check
+        // Nessun ticket disponibile, rilascia il lock
         struct sembuf sem_unlock;
         sem_unlock.sem_num = SEM_SERVICE_LOCK(random_service);
-        sem_unlock.sem_op = 1; // Unlock (V operation)
+        sem_unlock.sem_op = 1;
         sem_unlock.sem_flg = 0;
         if (safe_semop(semid, &sem_unlock, 1) < 0) {
             perror("[OPERATORE] Errore nel rilascio del lock per il ticket");
         }
-        
         return 0; // Nessun utente da servire
     }
 
-    // Se abbiamo un ticket valido, servi l'utente
+    // Servo l'utente
     if (ticket_idx >= 0 && ticket_idx < MAX_REQUESTS)
     {
-        // Ottieni informazioni sul ticket e sull'utente
-        TicketRequest *ticket = &shm_ptr->ticket_requests[ticket_idx];
-
-        //TODO: CONTROLLARE QUI
-        // Controlla se l'utente è già in servizio da un altro operatore
         if (ticket->being_served && ticket->serving_operator_pid != 0) {
             printf("[OPERATORE %d] L'utente #%d (Ticket: %s) è già in servizio dall'operatore PID %d\n",
                    operator_id, ticket->user_id, ticket->ticket_id, ticket->serving_operator_pid);
             
-            // DEVO RE-ACQUISIRE il semaforo per rimettere il ticket in coda
+            // Relock semaforo per rimettere il ticket in coda
             struct sembuf sem_relock;
             sem_relock.sem_num = SEM_SERVICE_LOCK(random_service);
-            sem_relock.sem_op = -1; // Lock (P operation)
+            sem_relock.sem_op = -1;
             sem_relock.sem_flg = 0;
             if (safe_semop(semid, &sem_relock, 1) < 0) {
                 perror("[OPERATORE] Errore nel re-acquisire il lock per rimettere il ticket");
                 return 0;
             }
-            
-            // IMPORTANTE: Rimetti il ticket in coda dato che era già preso da un altro operatore
+
+            // Rimette in coda
             int tail = shm_ptr->service_queue_tail[random_service];
             shm_ptr->service_queues[random_service][tail] = ticket_idx;
             shm_ptr->service_queue_tail[random_service] = (tail + 1) % MAX_SERVICE_QUEUE;
             shm_ptr->service_tickets_waiting[random_service]++;
             
-            // Rilascia nuovamente il lock
+            // Rilascia il lock
             struct sembuf sem_unlock;
             sem_unlock.sem_num = SEM_SERVICE_LOCK(random_service);
-            sem_unlock.sem_op = 1; // Unlock (V operation)
+            sem_unlock.sem_op = 1;
             sem_unlock.sem_flg = 0;
             if (safe_semop(semid, &sem_unlock, 1) < 0) {
                 perror("[OPERATORE] Errore nel rilascio del lock dopo aver rimesso il ticket");
@@ -219,60 +193,53 @@ int serve_customer(int assigned_counter)
             return 0; // Non serviamo l'utente
         }
 
-        // Probabilità casuale di prendere una pausa prima di servire il cliente
-        // Questo si attiva solo se c'è effettivamente un utente valido da servire
-        if ((rand() % 100) < BREAK_PROBABILITY)
+        // Probabilità di pausa PRE-Servizio
+        if (shm_ptr->total_pauses_global < NOF_PAUSE && (rand() % 100) < BREAK_PROBABILITY)
         {
-            printf("[OPERATORE %d] Vado in pausa e torno a casa per oggi. Lascio libero lo sportello %d.\n", operator_id, assigned_counter);
-            
-            // Aggiorna le statistiche delle pause con mutex per thread safety
+            // Aggiorna la pausa se non ci sono utenti in coda
             struct sembuf sem_pause_stats;
             sem_pause_stats.sem_num = SEM_MUTEX;
             sem_pause_stats.sem_op = -1; // Lock
             sem_pause_stats.sem_flg = 0;
-            
+
             if (semop(semid, &sem_pause_stats, 1) == 0) {
-                shm_ptr->operators[operator_id].total_pauses++;
-                // Rilascia il mutex
-                sem_pause_stats.sem_op = 1; // Unlock
-                semop(semid, &sem_pause_stats, 1);
+                // Ricontrolla dopo aver acquisito il mutex
+                if (shm_ptr->total_pauses_global < NOF_PAUSE) {
+                    shm_ptr->operators[operator_id].total_pauses++;
+                    shm_ptr->total_pauses_global++;
+                    // Rilascia il mutex
+                    sem_pause_stats.sem_op = 1; // Unlock
+                    semop(semid, &sem_pause_stats, 1);
+
+                    // Pausa qui (DEBUG)
+                    shm_ptr->operators[operator_id].status = OPERATOR_ON_BREAK;
+                    shm_ptr->counters[assigned_counter].operator_pid = 0;
+                    try_assign_available_operators();
+                    return -1;
+                } else {
+                    // Rilascia il mutex
+                    sem_pause_stats.sem_op = 1; // Unlock
+                    semop(semid, &sem_pause_stats, 1);
+                }
             }
-            
-            // Imposta lo stato dell'operatore come in pausa
-            shm_ptr->operators[operator_id].status = OPERATOR_ON_BREAK;
-
-            // Libera lo sportello (l'utente rimarrà in coda)
-            shm_ptr->counters[assigned_counter].operator_pid = 0;
-            
-            // Il semaforo è già stato rilasciato immediatamente dopo aver preso il ticket
-            // Non serve rilasciarlo di nuovo qui
-            
-            // Cerca operatori disponibili per riassegnare sportelli liberi
-            try_assign_available_operators();
-
-            return -1; // Indica che l'operatore va in pausa
         }
 
-        // Lock dell'utente - imposta che questo operatore sta servendo questo utente
+        // Lock utente servito da questo operatore
         ticket->being_served = 1;
         ticket->serving_operator_pid = getpid();
 
-        // Registra il tempo di inizio servizio per calcolare il tempo di attesa
+        // Tempo di attesa (ns)
         clock_gettime(CLOCK_MONOTONIC, &ticket->service_start_time);
-        
-        // Calcola il tempo di attesa in nanosecondi
         long wait_time_ns = (ticket->service_start_time.tv_sec - ticket->request_time.tv_sec) * 1000000000L +
                            (ticket->service_start_time.tv_nsec - ticket->request_time.tv_nsec);
         ticket->wait_time_ns = wait_time_ns;
 
-        // Stampa il messaggio di inizio servizio con il tempo di attesa
-        //printf("🕐 [OPERATORE %d] Inizio servizio per utente #%d (Ticket: %s) - Attesa: %.1fms\n",
-        //       operator_id, ticket->user_id, ticket->ticket_id, wait_time_ns / 1000000.0);
+        // DEBUG: Stampa tempo attesa
+        //printf("🕐 [OPERATORE %d] Inizio servizio per utente #%d (Ticket: %s) - Attesa: %.1fms\n",       operator_id, ticket->user_id, ticket->ticket_id, wait_time_ns / 1000000.0);
 
-        // Calcola un tempo di servizio casuale
         long service_time = calculate_random_service_time(random_service); 
         
-        // Registra il tempo di inizio servizio per le statistiche
+        // Tempo di servizio (ms)
         struct timespec start_service_time;
         clock_gettime(CLOCK_MONOTONIC, &start_service_time);
         
@@ -282,25 +249,14 @@ int serve_customer(int assigned_counter)
         // Prima di simulare il servizio, verifica se siamo ancora in una giornata lavorativa attiva
         if (!day_in_progress || !shm_ptr->day_in_progress)
         {
-            printf("\t\t\t[OPERATORE %d] Giornata terminata mentre mi preparavo a servire l'utente #%d (Ticket: %s). L'utente dovrà attendere.\n",
-                   operator_id, ticket->user_id, ticket->ticket_id);
+            // DEBUG: Stampa interruzione
+            //printf("\t\t\t[OPERATORE %d] Giornata terminata mentre mi preparavo a servire l'utente #%d (Ticket: %s). L'utente dovrà attendere.\n",operator_id, ticket->user_id, ticket->ticket_id);
                    
-            // NON incrementiamo i contatori qui - sarà gestito dalla funzione di conteggio alla fine del giorno
-            
-            // MANTENIAMO i valori being_served e serving_operator_pid per indicare che questo ticket
-            // è stato preso in carico ma non completato - la funzione di conteggio lo vedrà
-            // ticket->being_served = 1;  // Resta 1
-            // ticket->serving_operator_pid = getpid();  // Resta impostato
-                   
-            // Il semaforo è già stato rilasciato immediatamente dopo aver preso il ticket
-            // Non serve rilasciarlo di nuovo qui
-            
             return 0; // Non serviamo l'utente
         }
         
         // Simuliamo il servizio in modo preciso ma interrompibile solo da SIGUSR2
         
-        // SOLUZIONE DEFINITIVA: Timing preciso con nanosleep resistente agli interrupt
         long remaining_time_ns = service_time; // in nanosecondi
         const long check_interval_ns = 50000000L; // 50ms in nanosecondi
         
@@ -315,110 +271,78 @@ int serve_customer(int assigned_counter)
             
             struct timespec remaining_spec;
             
-            // CRITICO: nanosleep può essere interrotto dai segnali, quindi dobbiamo 
-            // verificare che il tempo completo sia trascorso
             int result = nanosleep(&sleep_spec, &remaining_spec);
             
             if (result == 0) {
                 // Sleep completato normalmente
                 remaining_time_ns -= sleep_time_ns;
             } else {
-                // Sleep interrotto - calcola quanto tempo è effettivamente trascorso
+                // Ricevuto segnale SIGTERM o SIGUSR2
                 long actual_sleep_ns = sleep_time_ns - (remaining_spec.tv_sec * 1000000000L + remaining_spec.tv_nsec);
                 remaining_time_ns -= actual_sleep_ns;
-                
-                // Se c'è ancora tempo rimanente, continua il loop
-                if (remaining_spec.tv_sec > 0 || remaining_spec.tv_nsec > 0) {
-                    // Riprendi il sleep per il tempo rimanente se la giornata è ancora attiva
-                    if (day_in_progress && shm_ptr->day_in_progress) {
-                        continue;
-                    }
-                }
             }
             
-            // Controlliamo se la giornata è terminata tramite il flag day_in_progress
-            // che viene impostato solo dal signal handler di SIGUSR2
-            // INOLTRE controlliamo anche shm_ptr->day_in_progress per sincronizzazione immediata
             if (!day_in_progress || !shm_ptr->day_in_progress) {
                 service_interrupted = 1;
                 break;
             }
         }
         
-        // Se la giornata è terminata prima che il servizio fosse completato
+        // QUI contiamo servizio interrotto (break 287)
         if (!day_in_progress || !shm_ptr->day_in_progress)
         {
-            printf("[OPERATORE %d] Giornata terminata mentre stavo servendo l'utente #%d (Ticket: %s). Servizio interrotto.\n",
-                   operator_id, ticket->user_id, ticket->ticket_id);
+            // DEBUG: Stampa interruzione
+            //printf("[OPERATORE %d] Giornata terminata mentre stavo servendo l'utente #%d (Ticket: %s). Servizio interrotto.\n",operator_id, ticket->user_id, ticket->ticket_id);
                    
-            // NON incrementiamo i contatori qui - sarà gestito dalla funzione di conteggio alla fine del giorno
-            // shm_ptr->daily_users_timeout[random_service]++;
-            // shm_ptr->total_users_timeout++;
-            
             // Rilascia il lock dell'utente
             ticket->being_served = 0;
             ticket->serving_operator_pid = 0;
-                   
-            // Il semaforo è già stato rilasciato immediatamente dopo aver preso il ticket
-            // Non serve rilasciarlo di nuovo qui
-            
+
             return 0; // Servizio interrotto
         }
 
-        // Registra il tempo di fine servizio e calcola la durata reale in secondi
+        // Calcola il tempo di servizio effettivo
         gettimeofday(&end_time, NULL);
-        //double service_duration_sec = (end_time.tv_sec - start_time.tv_sec) +
-        //                              (end_time.tv_usec - start_time.tv_usec) / 1000000.0;
-
-        // Registra anche il tempo di fine per le statistiche sui tempi di servizio
+        
+        // Calcolo fine per statistiche
         struct timespec end_service_time;
         clock_gettime(CLOCK_MONOTONIC, &end_service_time);
         long actual_service_time_ns = (end_service_time.tv_sec - start_service_time.tv_sec) * 1000000000L + 
                                      (end_service_time.tv_nsec - start_service_time.tv_nsec);
 
-        // Converti la durata da secondi reali a minuti simulati
-        // WORK_DAY_MINUTES minuti simulati corrispondono a DAY_SIMULATION_TIME secondi reali
-        //double service_duration_min = (service_duration_sec / DAY_SIMULATION_TIME) * WORK_DAY_MINUTES;
-
-        // Aggiorna le statistiche sui tempi di servizio con mutex per thread safety
         struct sembuf sem_service_stats;
         sem_service_stats.sem_num = SEM_MUTEX;
-        sem_service_stats.sem_op = -1; // Lock
+        sem_service_stats.sem_op = -1;
         sem_service_stats.sem_flg = 0;
         
         if (semop(semid, &sem_service_stats, 1) == 0) {
-            // Aggiorna il tempo minimo di servizio
+            // Tempo min 
             if (actual_service_time_ns < shm_ptr->min_service_time[random_service]) {
                 shm_ptr->min_service_time[random_service] = actual_service_time_ns;
             }
             
-            // Aggiorna il tempo massimo di servizio
+            // Tempo max
             if (actual_service_time_ns > shm_ptr->max_service_time[random_service]) {
                 shm_ptr->max_service_time[random_service] = actual_service_time_ns;
             }
             
-            // Aggiorna il tempo totale e il conteggio dei servizi
+            // TOtale tempo
             shm_ptr->total_service_time[random_service] += actual_service_time_ns;
             shm_ptr->service_count[random_service]++;
             
             // Rilascia il mutex
-            sem_service_stats.sem_op = 1; // Unlock
+            sem_service_stats.sem_op = 1;
             semop(semid, &sem_service_stats, 1);
         }
 
-        // Incrementa il contatore degli utenti serviti
+        //Incrementi contatori
         shm_ptr->operators[operator_id].total_served++;
         
-        // Incrementa il contatore dei ticket serviti giornalieri
         shm_ptr->daily_tickets_served[random_service]++;
         shm_ptr->total_tickets_served++;
         
-        // Incrementa il contatore totale dei servizi erogati per l'intera simulazione
         shm_ptr->total_services_provided_simulation++;
 
-        // Registra il tempo di fine servizio
-        clock_gettime(CLOCK_MONOTONIC, &ticket->service_end_time);
-        
         // Aggiorna le statistiche sui tempi di attesa
         struct sembuf sem_wait_stats;
         sem_wait_stats.sem_num = SEM_MUTEX;
@@ -577,6 +501,12 @@ int main(int argc, char *argv[])
     // Ottieni l'ID dell'operatore dagli argomenti
     operator_id = atoi(argv[1]);
 
+    // Inizializza il generatore di numeri casuali UNA SOLA VOLTA per processo
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    unsigned int seed = ts.tv_nsec ^ getpid() ^ (operator_id << 16) ^ time(NULL);
+    srand(seed);
+
     // Collega alla memoria condivisa
     int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
     if (shmid == -1)
@@ -632,14 +562,6 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     
-    // Imposta handler per SIGALRM
-    sa.sa_handler = alarm_handler;
-    if (sigaction(SIGALRM, &sa, NULL) == -1)
-    {
-        perror("Operator: sigaction SIGALRM failed");
-        exit(EXIT_FAILURE);
-    }
-
     // Ciclo esterno per i giorni di simulazione
     while (running)
     {
