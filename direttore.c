@@ -127,6 +127,7 @@ void create_users(SharedMemory *shm_ptr)
         else if (user_pid < 0)
         {
             perror("fork for utente failed");
+            cleanup_handler(0); // Chiamata a cleanup in caso di errore di fork
             exit(EXIT_FAILURE);
         }
         else
@@ -810,7 +811,7 @@ void initialize_statistics(SharedMemory *shm) {
         shm->total_wait_time[i] = 0;
         shm->wait_count[i] = 0;
         
-        // Inizializza le statistiche tempi (servizio)
+        // Inizializza anche le statistiche tempi (servizio)
         shm->min_service_time[i] = LONG_MAX;
         shm->max_service_time[i] = 0;
         shm->total_service_time[i] = 0;

@@ -6,7 +6,7 @@
 #include <time.h> // Added for time_t
 
 // System limits for shared memory
-#define MAX_USERS 100000        // Support up to 100k users
+#define MAX_USERS 100000        
 #define MAX_QUEUE_SIZE 10000    // Max users in queue at once
 #define SHM_SIZE sizeof(SharedMemory) // Ensure SHM_SIZE uses the correct struct
 
@@ -17,12 +17,12 @@
 #define SIM_DURATION 5          // Total number of days to simulate
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Total seconds before timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanoseconds per simulated minute
-#define BREAK_PROBABILITY 0 //Probability of taking a break (%)
+#define BREAK_PROBABILITY 5 //Probability of taking a break (%)
 
 // Simulation parameters
-#define NOF_WORKERS 10         // Number of operator processes
-#define NOF_USERS 200         // Reduced to a more manageable number for system resources
-#define NOF_WORKER_SEATS 10
+#define NOF_WORKERS 300         // Number of operator processes
+#define NOF_USERS 5000         // Reduced to a more manageable number for system resources
+#define NOF_WORKER_SEATS 200
 #define NOF_PAUSE 5
 #define P_SERV_MIN 100            // da 0 a 100!!! Non è decimale
 #define P_SERV_MAX 100       
@@ -62,10 +62,10 @@
 #define NUM_SEMS (SEM_SERVICE_LOCK_BASE + SERVICE_COUNT)  // 14 semafori totali
 
 // Dimensione massima della coda delle richieste di ticket
-#define MAX_REQUESTS 5000
+#define MAX_REQUESTS 6000
 
 // Dimensione massima della coda per ogni servizio
-#define MAX_SERVICE_QUEUE 500
+#define MAX_SERVICE_QUEUE 6000
 
 // Chiave per la coda messaggi
 #define MSG_QUEUE_KEY 8912
