@@ -373,32 +373,23 @@ int serve_customer(int assigned_counter)
             shm_ptr->daily_wait_count_all++;
             
             // Rilascia il mutex
-            sem_wait_stats.sem_op = 1; // Unlock
+            sem_wait_stats.sem_op = 1;
             semop(semid, &sem_wait_stats, 1);
         }
 
-        // Il ticket è già stato rimosso dalla coda all'inizio della funzione
-        // Aggiorna solo lo stato del ticket nella memoria condivisa
         ticket->status = REQUEST_COMPLETED;
         ticket->counter_id = assigned_counter;
-        ticket->served_successfully = 1;  // Indica che il servizio è stato completato con successo
+        ticket->served_successfully = 1;
         
-        // Rilascia il lock dell'utente
+        // Libero il lock dell'utente
         ticket->being_served = 0;
         ticket->serving_operator_pid = 0;
 
-        //printf("[OPERATORE %d] Servito l'utente %d (Ticket: %s) per il servizio %s in %.3f secondi (%.1f minuti simulati) allo sportello %d\n",
-        //       operator_id, ticket->user_id, ticket->ticket_id, SERVICE_NAMES[random_service], service_duration_sec, service_duration_min, assigned_counter);
-
-        // Il semaforo è già stato rilasciato immediatamente dopo aver preso il ticket
-        // Non serve rilasciarlo di nuovo qui - questo permette il parallelismo!
-
-        return 1; // Utente servito con successo
+        // DEBUG: Tempo di servizio.
+        //printf("[OPERATORE %d] Servito l'utente %d (Ticket: %s) per il servizio %s in %.3f secondi (%.1f minuti simulati) allo sportello %d\n",      operator_id, ticket->user_id, ticket->ticket_id, SERVICE_NAMES[random_service], service_duration_sec, service_duration_min, assigned_counter);
+        
+        return 1;
     }
-
-    // Il semaforo è già stato rilasciato immediatamente dopo aver preso il ticket
-    // oppure non è mai stato acquisito (nessun ticket disponibile)
-    // Non serve rilasciarlo di nuovo qui
 
     return 0; // Nessun utente valido da servire
 }
@@ -406,34 +397,31 @@ int serve_customer(int assigned_counter)
 // Handler per la fine della giornata
 void day_end_handler(int signum __attribute__((unused)))
 {
+    // Ricevo segnale di fine giornata
     if (signum == SIGUSR2)
     {
-        //printf("[OPERATORE %d] Giornata lavorativa terminata (segnale dal direttore).\n", operator_id);
-
         // Imposta la flag di giorno non più in corso
         day_in_progress = 0;
         
         // Imposta lo stato dell'operatore come finito per il giorno
         shm_ptr->operators[operator_id].status = OPERATOR_FINISHED;
         
-        // Alla fine della giornata, rilascia lo sportello che era stato assegnato
+
         struct sembuf sem_op;
         sem_op.sem_num = SEM_COUNTERS;
         sem_op.sem_op = -1; // Lock
         sem_op.sem_flg = 0;
         
         if (semop(semid, &sem_op, 1) == 0) {
-            // Cerca lo sportello assegnato a questo operatore
+            // Libero sportello da operatore attivo
             for (int i = 0; i < NOF_WORKER_SEATS; i++) {
                 if (shm_ptr->counters[i].operator_pid == getpid()) {
-                    // Rilascia lo sportello
                     shm_ptr->counters[i].operator_pid = 0;
                     break;
                 }
             }
-            
-            // Rilascia il mutex
-            sem_op.sem_op = 1; // Unlock
+
+            sem_op.sem_op = 1;
             semop(semid, &sem_op, 1);
         }
     }
@@ -444,10 +432,9 @@ void day_start_handler(int signum __attribute__((unused)))
 {
     if (signum == SIGUSR1)
     {
-        //printf("[OPERATORE %d] Inizio della giornata lavorativa.\n", operator_id);
         day_in_progress = 1;
         
-        // Se l'operatore era in pausa, ora può cercare di lavorare di nuovo
+        // Risveglia operatore in caso di pausa
         if (shm_ptr->operators[operator_id].status == OPERATOR_ON_BREAK) {
             shm_ptr->operators[operator_id].status = OPERATOR_WAITING;
         }
@@ -457,21 +444,18 @@ void day_start_handler(int signum __attribute__((unused)))
 // Handler per la terminazione
 void termination_handler(int signum __attribute__((unused)))
 {
-    //printf("[OPERATORE %d] Ricevuto segnale di terminazione.\n", operator_id);
     running = 0;
 }
 
-// Funzione per assegnare casualmente un servizio all'operatore
+// Assegna servizio casuale all'operatore (FISSO)
 ServiceType assign_random_service()
 {
-    // Inizializza il generatore di numeri casuali
     srand(time(NULL) ^ getpid());
 
-    // Genera e restituisce un servizio casuale
     return rand() % SERVICE_COUNT;
 }
 
-// Funzione per inizializzare l'operatore nella memoria condivisa
+// Inizializza l'operatore 
 void initialize_operator(int op_id)
 {
     // Assegna un servizio casuale
@@ -485,23 +469,21 @@ void initialize_operator(int op_id)
     shm_ptr->operators[op_id].total_pauses = 0;
     shm_ptr->operators[op_id].status = OPERATOR_WAITING; // Inizia in attesa
 
-    printf("[OPERATORE %d] PID: %d, Servizio assegnato: %s (ID: %d)\n",
-           op_id, getpid(), SERVICE_NAMES[random_service], random_service);
+    // DEBUG: Stampa informazioni operatore
+    printf("[OPERATORE %d] PID: %d, Servizio assegnato: %s (ID: %d)\n", op_id, getpid(), SERVICE_NAMES[random_service], random_service);
 }
 
 int main(int argc, char *argv[])
 {
-    // Verifica se è stato passato l'ID dell'operatore
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s <operator_id>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
-    // Ottieni l'ID dell'operatore dagli argomenti
+    // ID operatore 
     operator_id = atoi(argv[1]);
 
-    // Inizializza il generatore di numeri casuali UNA SOLA VOLTA per processo
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     unsigned int seed = ts.tv_nsec ^ getpid() ^ (operator_id << 16) ^ time(NULL);
@@ -515,6 +497,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    // Attacca la memoria condivisa
     shm_ptr = (SharedMemory *)shmat(shmid, NULL, 0);
     if (shm_ptr == (void *)-1)
     {
@@ -571,16 +554,15 @@ int main(int argc, char *argv[])
             day_in_progress = 1;
         }
 
-        // Attendi l'inizio della giornata tramite segnale SIGUSR1 o semaforo
+        // Aspetta SIGUSR1 per iniziare
         if (!day_in_progress && running)
         {
-            // Usa un semaforo per bloccare l'esecuzione finché non inizia la giornata
+            // Attesa bloccante
             struct sembuf sem_wait;
             sem_wait.sem_num = SEM_DAY_START;
-            sem_wait.sem_op = -1; // Operazione P (decremento)
+            sem_wait.sem_op = -1;
             sem_wait.sem_flg = 0;
             
-            // Il semaforo ci bloccherà fino a quando il direttore non lo incrementa
             if (semop(semid, &sem_wait, 1) == -1)
             {
                 if (errno != EINTR) // Ignora se interrotto da segnale
@@ -595,13 +577,11 @@ int main(int argc, char *argv[])
         }
 
         if (!running)
-            break; // Se è stato richiesto di terminare durante l'attesa, esci
+            break; 
 
         // Salta se l'operatore è in pausa per tutta la giornata
         if (shm_ptr->operators[operator_id].status == OPERATOR_ON_BREAK) {
-            // L'operatore è in pausa per tutta la giornata, attende solo la fine
-            //printf("[OPERATORE %d] Sono in pausa per tutta la giornata.\n", operator_id);
-            
+
             // Aspetta la fine della giornata usando sigsuspend
             sigset_t wait_mask;
             sigfillset(&wait_mask);
@@ -613,7 +593,7 @@ int main(int argc, char *argv[])
             continue; // Riparte il ciclo per il giorno successivo
         }
 
-        // Loop per cercare uno sportello finché la giornata è in corso
+        // Inizio ricerca sportello
         int assigned_counter = -1;
         while (day_in_progress && running && assigned_counter < 0 && 
                shm_ptr->operators[operator_id].status != OPERATOR_ON_BREAK)
@@ -621,7 +601,7 @@ int main(int argc, char *argv[])
             // Acquisire il mutex per l'accesso agli sportelli
             struct sembuf sem_op;
             sem_op.sem_num = SEM_COUNTERS;
-            sem_op.sem_op = -1; // Lock
+            sem_op.sem_op = -1;
             sem_op.sem_flg = 0;
             
             if (semop(semid, &sem_op, 1) < 0) {
@@ -629,7 +609,7 @@ int main(int argc, char *argv[])
                 break;
             }
             
-            // Cerca uno sportello libero per il nostro servizio
+            // Ricerca sportello 
             for (int i = 0; i < NOF_WORKER_SEATS; i++) {
                 if (shm_ptr->counters[i].active && 
                     shm_ptr->counters[i].current_service == random_service &&
@@ -650,9 +630,8 @@ int main(int argc, char *argv[])
                 perror("Operator: Failed to release counter mutex");
             }
             
-            // Se non ha trovato uno sportello, aspetta usando sigsuspend
+            // Se non ha sportello, attesa
             if (assigned_counter < 0 && day_in_progress && running) {
-                // Imposta lo stato come in attesa
                 shm_ptr->operators[operator_id].status = OPERATOR_WAITING;
                 
                 // Aspetta un segnale usando sigsuspend invece dell'attesa attiva
@@ -677,11 +656,11 @@ int main(int argc, char *argv[])
                 int result = serve_customer(assigned_counter);
                 if (result == -1)
                 {
-                    // L'operatore è andato in pausa
+                    // Pausa
                     break;
                 }
                 
-                // Se non ci sono clienti da servire, attendi il segnale di nuovo ticket
+                // Attesa ticket in caso di utenti non in coda
                 if (result == 0 && day_in_progress && running && 
                     shm_ptr->operators[operator_id].status == OPERATOR_WORKING)
                 {
@@ -692,21 +671,9 @@ int main(int argc, char *argv[])
                     sigdelset(&wait_mask, SIGUSR2); // Fine giornata
                     sigdelset(&wait_mask, SIGTERM); // Terminazione
                     
-                    // Aspetta istantaneamente fino al prossimo segnale - ZERO ATTESA ATTIVA
                     sigsuspend(&wait_mask);
                 }
-                else if (result == 1 && day_in_progress && running && 
-                         shm_ptr->operators[operator_id].status == OPERATOR_WORKING)
-                {
-                    // Cliente servito con successo - continua immediatamente col prossimo
-                    // ZERO DELAY - controllo immediato per il prossimo cliente
-                }
             }
-        }
-        else
-        {
-            // Non ha trovato uno sportello e la giornata è finita o l'operatore è in pausa
-            // Non fa nulla, il loop esterno ripartirà per il giorno successivo
         }
     }
 
