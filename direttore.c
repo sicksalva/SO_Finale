@@ -450,15 +450,14 @@ double nanoseconds_to_simulated_minutes(long nanoseconds) {
 
 // Funzione per stampare la tabella separata dei tempi di servizio
 void print_service_timing_statistics_table(SharedMemory *shm, int days_completed) {
-    printf("\n+----------------------+----------+----------+----------+----------+----------+----------+\n");
-    printf("| STATISTICHE TEMPI DI SERVIZIO                                                          |\n");
-    printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
-    printf("|      Servizio        | Tempo    | Tempo    | Tempo    | Tempo    | Minimo   | Massimo  |\n");
-    printf("|                      | Serv.    | Serv.    | Serv.    | Serv.    | Giorno   | Giorno   |\n");
-    printf("|                      | Medio    | Medio    | Medio    | Medio    |          |          |\n");
-    printf("|                      | Giorno   | Simul.   | Giorno   | Simul.   |          |          |\n");
-    printf("|                      | (Sec)    | (Sec)    | (Min)    | (Min)    | (Sec)    | (Sec)    |\n");
-    printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
+    printf("\n+----------------------+----------+----------+----------+----------+----------+----------+----------+----------+\n");
+    printf("| STATISTICHE TEMPI DI SERVIZIO                                                                  |\n");
+    printf("+----------------------+----------+----------+----------+----------+----------+----------+----------+----------+\n");
+    printf("|      Servizio        | Tempo    | Tempo    | Tempo    | Tempo    | Minimo   | Minimo   | Massimo  | Massimo  |\n");
+    printf("|                      | Serv.    | Serv.    | Serv.    | Serv.    | Giorno   | Giorno   | Giorno   | Giorno   |\n");
+    printf("|                      | Medio    | Medio    | Medio    | Medio    | (Sec)    | (Min)    | (Sec)    | (Min)    |\n");
+    printf("|                      | Giorno   | Simul.   | Giorno   | Simul.   |          |          |          |          |\n");
+    printf("+----------------------+----------+----------+----------+----------+----------+----------+----------+----------+\n");
     
     for (int i = 0; i < SERVICE_COUNT; i++) {
         int total_service_count_service = 0;
@@ -501,18 +500,23 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
             long avg_nano_simulation = total_service_time_service / total_service_count_service;
             avg_service_time_simulation_min = nanoseconds_to_simulated_minutes(avg_nano_simulation);
         }
+
+        double min_service_time_min = shm->min_service_time[i] == LONG_MAX ? 0 : nanoseconds_to_simulated_minutes(shm->min_service_time[i]);
+        double max_service_time_min = nanoseconds_to_simulated_minutes(shm->max_service_time[i]);
         
-        printf("| %-20s | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f |\n",
+        printf("| %-20s | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f |\n",
                SERVICE_NAMES[i], 
                avg_service_time_daily,           // Tempo medio giornaliero (secondi)
                avg_service_time_simulation,      // Tempo medio simulazione (secondi)
                avg_service_time_daily_min,       // Tempo medio giornaliero (minuti simulati)
                avg_service_time_simulation_min,  // Tempo medio simulazione (minuti simulati)
-               min_service_time_sec,            // Tempo minimo (secondi)
-               max_service_time_sec);           // Tempo massimo (secondi)
+               min_service_time_sec,             // Tempo minimo (secondi)
+               min_service_time_min,             // Tempo minimo (minuti simulati)
+               max_service_time_sec,             // Tempo massimo (secondi)
+               max_service_time_min);            // Tempo massimo (minuti simulati)
     }
     
-    printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
+    printf("+----------------------+----------+----------+----------+----------+----------+----------+----------+----------+\n");
 }
 
 // Funzione per stampare le statistiche complete finali
