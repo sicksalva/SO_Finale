@@ -81,13 +81,13 @@ double minutes_to_simulation_seconds(int minutes)
 // Funzione per richiedere un ticket dal processo di gestione ticket
 int request_ticket(int user_id, int service_id)
 {
-    // Verifica che il processo ticket sia attivo
+    // Processo ticket attivo
     if (shm_ptr == NULL || shm_ptr->ticket_pid <= 0)
     {
         return -1;
     }
 
-    // Otteniamo accesso alla coda messaggi se non già fatto
+    // Accesso coda messaggi
     if (msgid == -1)
     {
         msgid = msgget(MSG_QUEUE_KEY, 0666);
@@ -113,23 +113,23 @@ int request_ticket(int user_id, int service_id)
     // Otteniamo l'indice di richiesta corrente e lo incrementiamo
     int request_index = shm_ptr->next_request_index;
     if (request_index >= MAX_REQUESTS) {
-        // Se abbiamo raggiunto il limite, rilasciamo il mutex e restituiamo errore
+        // Limite massimo di richieste raggiunto, errore e unlock
         sem_op.sem_op = 1; // Unlock
         semop(semid, &sem_op, 1);
         return -1;
     }
     
-    // Incrementa next_request_index
+    // Incrementa l'indice per la prossima richiesta
     shm_ptr->next_request_index++;
 
     // Crea la richiesta in shared memory
     TicketRequest *request = &(shm_ptr->ticket_requests[request_index]);
-    request->user_id = user_id;
-    request->service_id = service_id;
-    request->status = REQUEST_PENDING;
-    clock_gettime(CLOCK_MONOTONIC, &request->request_time);
+    request->user_id = user_id;         // ID dell'utente
+    request->service_id = service_id;   // Servizio richiesto
+    request->status = REQUEST_PENDING;  // Indica che è in attesa del ticket
+    clock_gettime(CLOCK_MONOTONIC, &request->request_time); // Per statistiche
     request->ticket_number = 0;
-    memset(request->ticket_id, 0, sizeof(request->ticket_id));
+    memset(request->ticket_id, 0, sizeof(request->ticket_id)); // Inizializza a vuoto
 
     // Rilascio del mutex
     sem_op.sem_op = 1; // Unlock
@@ -139,7 +139,7 @@ int request_ticket(int user_id, int service_id)
         return -1;
     }
 
-    // Ora invia il messaggio al processo ticket con il request_index
+    // Invia il messaggio di richiesta ticket
     TicketRequestMsg msg;
     msg.mtype = MSG_TICKET_REQUEST;
     msg.user_id = user_id;
@@ -181,7 +181,7 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
     // Registra un signal handler temporaneo per SIGUSR1 come notifica da ticket
     struct sigaction sa_ticket;
     memset(&sa_ticket, 0, sizeof(sa_ticket));
-    sa_ticket.sa_handler = SIG_IGN; // Solo per impostare l'handler (saremo in attesa esplicita)
+    sa_ticket.sa_handler = SIG_IGN; // Imposta l'handler a SIG_IGN per evitare la terminazione di default
     sigemptyset(&sa_ticket.sa_mask);
     sa_ticket.sa_flags = 0;
     
@@ -203,7 +203,7 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
     timeout.tv_sec = 0;
     timeout.tv_nsec = 200000000; // 200ms
     
-    // Loop di attesa principale - Ora utilizza SIGUSR1 per la notifica dal ticket e SIGUSR2 per fine giornata
+    // Loop principale: attende SIUGUSR1 (ticket) o SIGUSR2 (fine giornata)
     while (shm_ptr->day_in_progress && simulation_active)
     {
         // Attendere un segnale o il timeout
@@ -212,39 +212,36 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
         // Controlla lo stato della richiesta dopo il segnale o il timeout
         if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
         {
-            // Sblocca i segnali prima di uscire
+            // Ricevuto il ticket con successo (tolgo mascheramento)
             sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
-            return 0;  // Success
+            return 0; 
         }
         else if (shm_ptr->ticket_requests[request_index].status == REQUEST_REJECTED)
         {
             printf("\t[UTENTE %d] Richiesta ticket rifiutata\n", user_id);
-            // Sblocca i segnali prima di uscire
             sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
-            return -1;  // Request rejected
+            return -1;
         }
-        
+
+        // La giornata è finita, esci dal loop
         if (sig == SIGUSR2 || !shm_ptr->day_in_progress) {
-            // La giornata è finita, esci dal loop
             break;
         }
     }
    
-    // Aggiorna il contatore degli utenti non serviti per mancanza di tempo
+    // Break riga 228 -> contiamo come non servito (e non come tornato a casa)
     struct sembuf sem_op;
     sem_op.sem_num = SEM_MUTEX;
     sem_op.sem_op = -1; // Lock
     sem_op.sem_flg = 0;
     
     if (semop(semid, &sem_op, 1) == 0) {
-        // Se la richiesta era in elaborazione ma non completata (utente non ha mai ricevuto il ticket)
+        // Utente non ha ricevuto il ticket entro la fine della giornata
         if (shm_ptr->ticket_requests[request_index].status == REQUEST_PENDING ||
             shm_ptr->ticket_requests[request_index].status == REQUEST_PROCESSING) {
             shm_ptr->daily_users_no_ticket[service_id]++;
             shm_ptr->total_users_no_ticket++;
-            
         } else {
-            // La richiesta non era nemmeno iniziata o è stata esplicitamente rifiutata
             printf("\t[UTENTE %d] Richiesta non elaborata o rifiutata alla fine della giornata\n", user_id);
         }
         
@@ -253,42 +250,38 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
         semop(semid, &sem_op, 1);
     }
     
-    // Sblocca i segnali prima di uscire
+    // Sblocca i segnali prima di uscire (in caso di break dal loop)
     sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
     return -1;
 }
 
-// Funzione per verificare se un servizio è effettivamente disponibile (sportello + operatore)
+// Verifica disponibilità del servizio (sportello + operatore)
 int is_service_available(SharedMemory *shm, int service_id)
 {
-    // Itera su tutti gli sportelli
     for (int i = 0; i < NOF_WORKER_SEATS; i++)
     {
-        // Controlla se lo sportello è attivo e assegnato al servizio richiesto
+        // Controlla sportello attivo 
         if (shm->counters[i].active && shm->counters[i].current_service == (ServiceType)service_id)
         {
-            // Se lo sportello è attivo per il servizio, controlla se c'è un operatore assegnato
+            // Controlla operatore attivo
             if (shm->counters[i].operator_pid > 0)
             {
-                // Itera su tutti gli operatori per trovare quello assegnato
                 for (int j = 0; j < NOF_WORKERS; j++)
                 {
-                    // Controlla se l'operatore è attivo e corrisponde al PID nello sportello
                     if (shm->operators[j].active && shm->operators[j].pid == shm->counters[i].operator_pid)
                     {
-                        // L'assegnazione dello sportello implica la competenza, quindi se troviamo
-                        // un operatore attivo assegnato, il servizio è disponibile.
-                        return 1; // Trovato sportello attivo con operatore.
+                        return 1;
                     }
                 }
             }
         }
     }
-    return 0; // Nessuno sportello attivo con operatore trovato per questo servizio.
+    return 0;
 }
 
-// Refactored function to increment stats for users who go home without service
+// Incrementa utenti tornati a casa senza servizio
 void increment_users_home_stats(int service_id) {
+
     struct sembuf sem_op;
     sem_op.sem_num = SEM_MUTEX;
     sem_op.sem_op = -1; // Lock
@@ -304,7 +297,7 @@ void increment_users_home_stats(int service_id) {
     }
 }
 
-// Refactored function to wait for a signal with a timeout
+// Funzione di attesa per un segnale specifico con timeout
 void wait_for_signal(int signum, volatile int *condition) {
     sigset_t wait_set;
     sigemptyset(&wait_set);
@@ -314,6 +307,7 @@ void wait_for_signal(int signum, volatile int *condition) {
     sigset_t old_mask;
     sigprocmask(SIG_BLOCK, &wait_set, &old_mask);
 
+    // Condition è day_in_progress_flag
     while (*condition && simulation_active) {
         struct timespec timeout = {.tv_sec = 0, .tv_nsec = 500000000}; // 500ms
         int sig = sigtimedwait(&wait_set, NULL, &timeout);
@@ -331,7 +325,6 @@ void wait_for_signal(int signum, volatile int *condition) {
 
 int main(int argc, char *argv[])
 {
-    // Get user ID from argument (passed by director)
     if (argc < 2)
     {
         fprintf(stderr, "Usage: %s <user_id>\n", argv[0]);
@@ -340,21 +333,17 @@ int main(int argc, char *argv[])
 
     user_id = atoi(argv[1]);
 
-    // Seed the random number generator ONCE per user process for unique behavior.
+    // Seme per il generatore di numeri casuali
     srand(getpid() ^ time(NULL));
 
-    // Determine this user's personal probability of visiting the post office.
     int personal_arrival_probability = calculate_personal_probability();
 
-    
-    // Set up signal handlers.
-    // We register SIG_IGN to prevent the default termination action for SIGUSR1/SIGUSR2.
-    // The signals are handled synchronously by sigtimedwait in the main loop.
+    // Impostazione handler segnali (sennò esegue kill)
     signal(SIGUSR1, SIG_IGN);
     signal(SIGUSR2, SIG_IGN);
-    signal(SIGTERM, end_simulation_handler); // Signal to end simulation
+    signal(SIGTERM, end_simulation_handler);
 
-    // Connect to shared memory
+    // Connetti alla memoria condivisa
     int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
     if (shmid == -1)
     {
@@ -362,6 +351,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    // Attacca la memoria condivisa
     shm_ptr = (SharedMemory *)shmat(shmid, NULL, 0);
     if (shm_ptr == (void *)-1)
     {
@@ -369,7 +359,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Connect to semaphores
+    // Semaforo
     semid = semget(SEM_KEY, NUM_SEMS, 0666);
     if (semid == -1)
     {
@@ -378,30 +368,25 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Seed the random number generator once per process
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    srand(ts.tv_nsec ^ getpid() ^ shm_ptr->simulation_day);
+    // ------------------------------------------------------------------------------
+    // Simulazione principale
+    // ------------------------------------------------------------------------------
 
-    // Main simulation loop - runs for the entire simulation
     while (simulation_active)
     {
-        // Reset day_started all'inizio di ogni ciclo
         day_started = 0;
         
-        // Wait for day start signal (SIGUSR1)
+        // Attende il segnale di inizio giornata (SIGUSR1) dal direttore
         int day_in_progress_flag = !shm_ptr->day_in_progress;
         wait_for_signal(SIGUSR1, &day_in_progress_flag);
         
         if (!simulation_active) break;
         
-        // Dopo aver ricevuto il segnale, attendi anche sul semaforo SEM_DAY_START
+        // Semaforo per iniziare la giornata
         struct sembuf sem_wait;
         sem_wait.sem_num = SEM_DAY_START;
-        sem_wait.sem_op = -1;  // Operazione P (wait)
+        sem_wait.sem_op = -1;
         sem_wait.sem_flg = 0;
-        
-        //printf("\t[UTENTE %d] Attendo sulla barriera semaforo SEM_DAY_START...\n", user_id);
         
         // Attendi sul semaforo
         if (semop(semid, &sem_wait, 1) < 0) {
@@ -410,16 +395,12 @@ int main(int argc, char *argv[])
             }
         }
         
-        // Set day_started flag
         day_started = 1;
         
-        // Start timing
+        // Inizia il timer per la giornata
         struct timeval day_start;
         gettimeofday(&day_start, NULL);
         
-        //printf("\t[UTENTE %d] Giornata %d iniziata\n", user_id, shm_ptr->simulation_day);
-
-        // Decide se l'utente si presenta e per quale servizio
         int service_id = determine_arrival_and_service(personal_arrival_probability);
 
         // Se service_id è >= 0, l'utente ha deciso di visitare l'ufficio postale
@@ -428,63 +409,59 @@ int main(int argc, char *argv[])
             int arrival_minute = determine_arrival_time();
             double arrival_seconds = minutes_to_simulation_seconds(arrival_minute);
 
-            //printf("\t\t\t\t\t\t\t\t[UTENTE %d] Scheduled to arrive at minute %d on day %d for service: %s\n",
-            //       user_id, arrival_minute, shm_ptr->simulation_day, SERVICE_NAMES[service_id]);
+            // DEBUG: stampa info arrivo
+            //printf("\t\t\t\t\t\t\t\t[UTENTE %d] Scheduled to arrive at minute %d on day %d for service: %s\n",       user_id, arrival_minute, shm_ptr->simulation_day, SERVICE_NAMES[service_id]);
 
-            // La logica del resto della giornata rimane la stessa...
             int visited = 0;
+
+            // ------------------------------------------------------------------------------
+            // Loop GIORNATA (non simulazione)
+            // ------------------------------------------------------------------------------
+
             while (shm_ptr->day_in_progress && simulation_active && !visited)
             {
-                // Controlla l'ora di simulazione corrente
+                // Controlla tempo trascorso
                 struct timeval current_time;
                 gettimeofday(&current_time, NULL);
                 double elapsed_seconds = (current_time.tv_sec - day_start.tv_sec) +
                                          (current_time.tv_usec - day_start.tv_usec) / 1000000.0;
 
-                // Se è ora di arrivare all'ufficio postale
+                // Guarda se è ora di arrivare
                 if (elapsed_seconds >= arrival_seconds)
                 {
-                    // Controlla se il servizio è realmente disponibile (sportello E operatore)
                     if (!is_service_available(shm_ptr, service_id))
                     {
-                        // Incrementa il contatore degli utenti tornati a casa
-                        // perché il servizio non era disponibile (es. nessuno sportello o nessun operatore)
+                        // Utente tornato a casa
                         increment_users_home_stats(service_id);
-                        visited = 1; // Segna come "visitato" anche se non ha ottenuto servizio
+                        visited = 1;
                     }
                     else
                     {
-                        // Se il servizio è disponibile, procede con la richiesta del ticket
                         int request_index = request_ticket(user_id, service_id);
 
-                        // Gestisce la visita all'ufficio postale
                         if (request_index >= 0)
                         {
                             int result = handle_post_office_visit(user_id, service_id, request_index);
                             
                             if (result < 0)
                             {
-                                visited = 1; // Termina la visita anche in caso di errore
+                                // Ramo errore
+                                visited = 1;
                                 
-                                // Se la giornata è finita durante l'elaborazione del ticket
                                 if (!shm_ptr->day_in_progress) {
-                                    printf("\t\t\t\t\t\t[UTENTE %d] Non è stato possibile ricevere il biglietto per il servizio %s perché il giorno è terminato\n",
-                                           user_id, SERVICE_NAMES[service_id]);
+                                    printf("[UTENTE %d] Non è stato possibile ricevere il biglietto per il servizio %s perché il giorno è terminato\n", user_id, SERVICE_NAMES[service_id]);
                                 }
                             }
                             else
                             {
-                                // L'utente ha ricevuto il ticket con successo
-                                // NON incrementiamo daily_tickets_served qui - sarà fatto dall'operatore
-                                // quando completa effettivamente il servizio
+                                // Ramo successo
                                 visited = 1;
                             }
                         }
                         else
                         {
-                            visited = 1; // Termina la visita anche in caso di errore
+                            visited = 1;
                             
-                            // Se request_ticket fallisce, contiamo l'utente come "tornato a casa"
                             printf("\t[UTENTE %d] Errore nella richiesta del ticket per %s. Torno a casa.\n", 
                                    user_id, SERVICE_NAMES[service_id]);
                             
@@ -494,54 +471,46 @@ int main(int argc, char *argv[])
                 }
 
                 // Attendi un po' prima di controllare di nuovo
-                usleep(5000); // Sleep for 5ms
+                usleep(5000); 
             }
 
-            // TRACCIAMENTO UTENTI MANCANTI: Se l'utente non è mai riuscito a visitare l'ufficio postale
-            // (cioè visited = 0), significa che è arrivato troppo tardi e la giornata è finita
-            // prima che potesse arrivare. Contiamolo come "tornato a casa"
             if (!visited && day_started) {
                 printf("\t[UTENTE %d] Non sono riuscito ad arrivare in tempo (arrivo previsto: minuto %d). Torno a casa.\n", 
                        user_id, arrival_minute);
-                
-                // Incrementa il contatore degli utenti tornati a casa per mancanza di tempo
+
                 increment_users_home_stats(service_id);
             }
         }
         else
         {
-            // L'utente ha deciso di non visitare l'ufficio oggi
+            // DEBUG: stampa info non arrivo
             //printf("\t[UTENTE %d] Oggi non vado all'ufficio postale.\n", user_id);
         }
         
-        // TRACCIAMENTO AGGIUNTIVO: Se l'utente non ha mai iniziato la giornata
+        // Segnale inizio giornata mai ricevuto
         if (!day_started && simulation_active) {
-            printf("\t[UTENTE %d] La giornata non è mai iniziata per me. Conteggiato come non servito.\n", user_id);
+            printf("[UTENTE %d] La giornata non è mai iniziata per me. Conteggiato come non servito.\n", user_id);
             
-            // Incrementa il contatore degli utenti tornati a casa
             increment_users_home_stats(service_id);
         }
 
-        // Wait for day end signal (SIGUSR2) using sigwait
+        // Attendi il segnale di fine giornata (SIGUSR2) dal direttore
         if (shm_ptr->day_in_progress && simulation_active) {
-            // Crea un set di segnali per attendere SIGUSR2 e SIGTERM
+            
             sigset_t day_end_set;
             sigemptyset(&day_end_set);
             sigaddset(&day_end_set, SIGUSR2);
             sigaddset(&day_end_set, SIGTERM);
-            
-            // Blocca i segnali per poterli catturare con sigwait
             sigset_t old_mask;
             sigprocmask(SIG_BLOCK, &day_end_set, &old_mask);
             
-            // Attendi il segnale o il cambio della variabile day_in_progress
+            // Aspetta segnale di fine giornata o terminazione
             while (shm_ptr->day_in_progress && simulation_active) {
                 int sig;
                 struct timespec timeout;
                 timeout.tv_sec = 0;
-                timeout.tv_nsec = 200000000;  // 200 ms (più reattivo)
+                timeout.tv_nsec = 20000000;  // 20 ms
                 
-                // Attendi il segnale con timeout
                 sig = sigtimedwait(&day_end_set, NULL, &timeout);
                 
                 if (sig == SIGUSR2 || !shm_ptr->day_in_progress) {
@@ -555,14 +524,10 @@ int main(int argc, char *argv[])
                 }
             }
             
-            // Ripristina la maschera di segnali precedente
             sigprocmask(SIG_SETMASK, &old_mask, NULL);
         }
     }
 
-    // Detach from shared memory before exiting
     cleanup_resources();
-
-    //printf("\t[UTENTE %d] Process terminated\n", user_id);
     return 0;
 }
