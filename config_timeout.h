@@ -8,25 +8,22 @@
 // Limiti di sistema per la memoria condivisa
 #define SHM_SIZE sizeof(SharedMemory) // Assicura che SHM_SIZE usi la struttura corretta
 
-// Gestione del tempo - CONFIGURAZIONE TIMEOUT (tempi ridotti per testare timeout)
 #define WORK_DAY_HOURS 8
 #define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minuti
-#define DAY_SIMULATION_TIME 5   // RIDOTTO a 2 secondi per giorno per testare timeout rapidamente
-#define SIM_DURATION 5          // Solo 3 giorni per test rapidi
+#define DAY_SIMULATION_TIME 5       
+#define SIM_DURATION 5          
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Secondi totali prima del timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanosecondi per minuto simulato
 #define BREAK_PROBABILITY 0 
 
-// Parametri di simulazione - CONFIGURAZIONE TIMEOUT (più utenti per creare pressione)
-#define NOF_WORKERS 8          // Meno operatori per aumentare pressione
-#define NOF_USERS 150         // Più utenti per saturare il sistema e testare timeout
-#define NOF_WORKER_SEATS 8    // Meno sportelli disponibili
-#define NOF_PAUSE 3           // Meno posti per le pause
-#define P_SERV_MIN 70         // Servizi più probabili per saturare
+#define NOF_WORKERS 8          
+#define NOF_USERS 150         
+#define NOF_WORKER_SEATS 8    
+#define NOF_PAUSE 3           
+#define P_SERV_MIN 70         
 #define P_SERV_MAX 100       
-#define EXPLODE_THRESHOLD 1000 // Soglia normale per explode
+#define EXPLODE_THRESHOLD 1000 
 
-// Orari di lavoro (in minuti dall'inizio del giorno)
 #define OFFICE_OPEN_TIME 0      // L'ufficio apre all'inizio del giorno
 #define OFFICE_CLOSE_TIME 480   // L'ufficio chiude dopo 8 ore
 
@@ -45,12 +42,12 @@
 
 // Semafori separati per ogni servizio (molto più efficiente!)
 #define SEM_SERVICE_LOCK_BASE 8  // Base per i semafori dei servizi
-#define SEM_SERVICE_LOCK_PACKAGES (SEM_SERVICE_LOCK_BASE + PACKAGES)      // 8
-#define SEM_SERVICE_LOCK_LETTERS (SEM_SERVICE_LOCK_BASE + LETTERS)        // 9
-#define SEM_SERVICE_LOCK_BANCOPOST (SEM_SERVICE_LOCK_BASE + BANCOPOST)    // 10
-#define SEM_SERVICE_LOCK_BILLS (SEM_SERVICE_LOCK_BASE + BILLS)            // 11
-#define SEM_SERVICE_LOCK_FINANCIAL (SEM_SERVICE_LOCK_BASE + FINANCIAL)    // 12
-#define SEM_SERVICE_LOCK_WATCHES (SEM_SERVICE_LOCK_BASE + WATCHES)        // 13
+#define SEM_SERVICE_LOCK_PACKAGES (SEM_SERVICE_LOCK_BASE + PACKAGES)      
+#define SEM_SERVICE_LOCK_LETTERS (SEM_SERVICE_LOCK_BASE + LETTERS)        
+#define SEM_SERVICE_LOCK_BANCOPOST (SEM_SERVICE_LOCK_BASE + BANCOPOST)    
+#define SEM_SERVICE_LOCK_BILLS (SEM_SERVICE_LOCK_BASE + BILLS)            
+#define SEM_SERVICE_LOCK_FINANCIAL (SEM_SERVICE_LOCK_BASE + FINANCIAL)    
+#define SEM_SERVICE_LOCK_WATCHES (SEM_SERVICE_LOCK_BASE + WATCHES)        
 
 // Macro per calcolare il semaforo specifico di un servizio
 #define SEM_SERVICE_LOCK(service) (SEM_SERVICE_LOCK_BASE + (service))
@@ -179,8 +176,8 @@ typedef struct Operator { // Aggiunto nome tag struttura
 typedef struct {
     // ID dei processi
     pid_t ticket_pid;
-    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti (150 per timeout)
-    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori (8 per timeout)
+    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti
+    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori
 
     // Disponibilità servizi
     int service_available[SERVICE_COUNT];
