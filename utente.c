@@ -483,9 +483,8 @@ int main(int argc, char *argv[])
                         else
                         {
                             visited = 1;
-                            
-                            printf("\t[UTENTE %d] Errore nella richiesta del ticket per %s. Torno a casa.\n", 
-                                   user_id, SERVICE_NAMES[service_id]);
+                            // DEBUG: stampa errore richiesta ticket
+                            //printf("\t[UTENTE %d] Errore nella richiesta del ticket per %s. Torno a casa.\n", user_id, SERVICE_NAMES[service_id]);
                             
                             increment_users_home_stats(service_id);
                         }

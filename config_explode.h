@@ -8,23 +8,23 @@
 // Limiti di sistema per la memoria condivisa
 #define SHM_SIZE sizeof(SharedMemory) // Assicura che SHM_SIZE usi la struttura corretta
 
-// Gestione del tempo - CONFIGURAZIONE TIMEOUT (tempi ridotti per testare timeout)
+// Gestione del tempo
 #define WORK_DAY_HOURS 8
 #define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minuti
-#define DAY_SIMULATION_TIME 5   // RIDOTTO a 2 secondi per giorno per testare timeout rapidamente
-#define SIM_DURATION 5          // Solo 3 giorni per test rapidi
+#define DAY_SIMULATION_TIME 5   
+#define SIM_DURATION 5          // Numero totale di giorni da simulare
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Secondi totali prima del timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanosecondi per minuto simulato
-#define BREAK_PROBABILITY 0 
+#define BREAK_PROBABILITY 0 // Probabilità di fare una pausa (%)
 
-// Parametri di simulazione - CONFIGURAZIONE TIMEOUT (più utenti per creare pressione)
-#define NOF_WORKERS 8          // Meno operatori per aumentare pressione
-#define NOF_USERS 150         // Più utenti per saturare il sistema e testare timeout
-#define NOF_WORKER_SEATS 8    // Meno sportelli disponibili
-#define NOF_PAUSE 3           // Meno posti per le pause
-#define P_SERV_MIN 70         // Servizi più probabili per saturare
+// Parametri di simulazione - CONFIGURAZIONE EXPLODE (threshold basso per testare explode)
+#define NOF_WORKERS 10         // Numero di processi operatore
+#define NOF_USERS 1000         // PIÙ UTENTI per saturare il sistema e testare explode
+#define NOF_WORKER_SEATS 10
+#define NOF_PAUSE 5
+#define P_SERV_MIN 50            // da 0 a 100!!! Non è decimale
 #define P_SERV_MAX 100       
-#define EXPLODE_THRESHOLD 1000 // Soglia normale per explode
+#define EXPLODE_THRESHOLD 20  // SOGLIA MOLTO BASSA per testare explode facilmente
 
 // Orari di lavoro (in minuti dall'inizio del giorno)
 #define OFFICE_OPEN_TIME 0      // L'ufficio apre all'inizio del giorno
@@ -179,8 +179,8 @@ typedef struct Operator { // Aggiunto nome tag struttura
 typedef struct {
     // ID dei processi
     pid_t ticket_pid;
-    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti (150 per timeout)
-    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori (8 per timeout)
+    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti (200 per explode)
+    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori
 
     // Disponibilità servizi
     int service_available[SERVICE_COUNT];
