@@ -69,7 +69,8 @@ int calculate_personal_probability()
 // Calcola l'orario di arrivo in minuti (tra 0 e 479)
 int determine_arrival_time()
 {
-    return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
+    return 1;
+    //return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
 }
 
 // Converti minuti simulati in secondi reali
@@ -138,6 +139,8 @@ int request_ticket(int user_id, int service_id)
         perror("Failed to release queue mutex");
         return -1;
     }
+
+    usleep(1000); // FIX per race condition
 
     // Invia il messaggio di richiesta ticket
     TicketRequestMsg msg;
