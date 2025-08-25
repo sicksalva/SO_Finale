@@ -21,7 +21,7 @@
 
 // Simulation parameters
 #define NOF_WORKERS 300         // Number of operator processes
-#define NOF_USERS 700         // Reduced to a more manageable number for system resources
+#define NOF_USERS 100         // Reduced to a more manageable number for system resources
 #define NOF_WORKER_SEATS 300
 #define NOF_PAUSE 5
 #define P_SERV_MIN 100            // da 0 a 100!!! Non è decimale
