@@ -32,62 +32,45 @@ void termination_handler(int signum __attribute__((unused)))
     running = 0;
 }
 
+// Funzione per il reset giornaliero di code, contatori e richieste
+void reset_daily_counters() {
+    if (shm_ptr != NULL && shm_ptr != (void *)-1) {
+        struct sembuf sem_op;
+        sem_op.sem_num = SEM_QUEUE;
+        sem_op.sem_op = -1; // Lock
+        sem_op.sem_flg = 0;
+        if (semop(semid, &sem_op, 1) < 0) {
+            perror("Ticket: Failed to acquire queue mutex for daily reset");
+            return;
+        }
+        shm_ptr->next_request_index = 0;
+        for (int i = 0; i < SERVICE_COUNT; i++) {
+            shm_ptr->service_queue_head[i] = 0;
+            shm_ptr->service_queue_tail[i] = 0;
+            shm_ptr->service_tickets_waiting[i] = 0;
+            shm_ptr->next_service_ticket[i] = 1;
+        }
+        // Reset solo delle richieste completate/rifiutate/undefined
+        for (int i = 0; i < MAX_REQUESTS; i++) {
+            if (shm_ptr->ticket_requests[i].status == REQUEST_COMPLETED ||
+                shm_ptr->ticket_requests[i].status == REQUEST_REJECTED ||
+                shm_ptr->ticket_requests[i].status == REQUEST_UNDEFINED) {
+                memset(&shm_ptr->ticket_requests[i], 0, sizeof(TicketRequest));
+            }
+        }
+        sem_op.sem_op = 1; // Unlock
+        if (semop(semid, &sem_op, 1) < 0) {
+            perror("Ticket: Failed to release queue mutex after daily reset");
+        }
+    }
+}
+
 // Implementiamo un handler per il segnale di inizio giornata
 void day_start_handler(int signum __attribute__((unused)))
 {
     // Do not increment current_day here - it should be managed by the director
     day_in_progress = 1;
-    
-    // Reset dei contatori giornalieri
-    if (shm_ptr != NULL && shm_ptr != (void *)-1)
-    {
-        // Acquisire il mutex per proteggere l'accesso ai contatori
-        struct sembuf sem_op;
-        sem_op.sem_num = SEM_QUEUE;
-        sem_op.sem_op = -1; // Lock (P operation)
-        sem_op.sem_flg = 0;
-
-        if (semop(semid, &sem_op, 1) < 0)
-        {
-            perror("Ticket: Failed to acquire queue mutex for daily reset");
-        }
-        else
-        {
-            // Reset dell'indice delle richieste
-            shm_ptr->next_request_index = 0;
-
-            // Reset di tutti gli array e contatori delle code
-            for (int i = 0; i < SERVICE_COUNT; i++)
-            {
-                // Reset dei contatori di testa e coda per ogni servizio
-                shm_ptr->service_queue_head[i] = 0;
-                shm_ptr->service_queue_tail[i] = 0;
-                shm_ptr->service_tickets_waiting[i] = 0;
-                
-                // Reset della numerazione dei ticket per ogni servizio 
-                // in modo che ogni giorno inizi da 1
-                shm_ptr->next_service_ticket[i] = 1;
-            }
-
-            // Reset solo delle richieste completate/rifiutate, non di quelle attive
-            for (int i = 0; i < MAX_REQUESTS; i++) {
-                if (shm_ptr->ticket_requests[i].status == REQUEST_COMPLETED ||
-                    shm_ptr->ticket_requests[i].status == REQUEST_REJECTED ||
-                    shm_ptr->ticket_requests[i].status == REQUEST_UNDEFINED) {
-                    memset(&shm_ptr->ticket_requests[i], 0, sizeof(TicketRequest));
-                }
-            }
-
-            //printf("Ticket: Reset all counters and request index for day %d\n", current_day);
-
-            // Rilascio del mutex
-            sem_op.sem_op = 1; // Unlock (V operation)
-            if (semop(semid, &sem_op, 1) < 0)
-            {
-                perror("Ticket: Failed to release queue mutex after daily reset");
-            }
-        }
-    }
+    reset_daily_counters();
 }
 
 // Handler per la fine della giornata
@@ -343,48 +326,7 @@ int main()
             break;
 
         // All'inizio di ogni giornata, resetta i contatori e le code
-        sem_op.sem_num = SEM_QUEUE;
-        sem_op.sem_op = -1; // Lock
-        sem_op.sem_flg = 0;
-
-        if (semop(semid, &sem_op, 1) < 0)
-        {
-            perror("Ticket: Failed to acquire queue mutex for daily reset");
-        }
-        else
-        {
-            // Reset dell'indice delle richieste
-            //printf("Ticket: Reset next_request_index from %d to 0 for day %d\n",
-            //       shm_ptr->next_request_index, shm_ptr->simulation_day);
-            shm_ptr->next_request_index = 0;
-
-            // Reset di tutti gli array e contatori delle code
-            for (int i = 0; i < SERVICE_COUNT; i++)
-            {
-                // Reset dei contatori di testa e coda per ogni servizio
-                shm_ptr->service_queue_head[i] = 0;
-                shm_ptr->service_queue_tail[i] = 0;
-                shm_ptr->service_tickets_waiting[i] = 0;
-                
-                // Reset della numerazione per ogni nuovo giorno
-                shm_ptr->next_service_ticket[i] = 1;
-            }
-
-            // Reset delle richieste in coda
-            memset(shm_ptr->ticket_requests, 0, sizeof(TicketRequest) * MAX_REQUESTS);
-
-            // Release the mutex
-            sem_op.sem_num = SEM_QUEUE;
-            sem_op.sem_op = 1; // Unlock
-            sem_op.sem_flg = 0;
-
-            if (semop(semid, &sem_op, 1) < 0)
-            {
-                perror("Ticket: Failed to release queue mutex after daily reset");
-            }
-
-            //printf("Ticket: All counters reset for day %d\n", shm_ptr->simulation_day);
-        }
+        reset_daily_counters();
 
         //-----------------------------------------------------------------------------------------------------------------------------------------------------
         // Loop per la giornata corrente - gestisce le richieste di ticket
@@ -438,7 +380,6 @@ int main()
         //printf("Ticket: Day %d completed\n", shm_ptr->simulation_day);
     }
 
-    // Cleanup
     //printf("Ticket process terminating...\n");
 
     if (shm_ptr != NULL && shm_ptr != (void *)-1)
