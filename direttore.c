@@ -119,7 +119,7 @@ void create_users(SharedMemory *shm_ptr)
         {
             // Processi figli
             char user_id[10];
-            sprintf(user_id, "%d", i);
+            snprintf(user_id, sizeof(user_id), "%d", i);
             execl("./utente", "./utente", user_id, NULL);
             perror("execl failed for utente");
             exit(EXIT_FAILURE);
@@ -179,7 +179,7 @@ void create_operators(SharedMemory *shm_ptr)
         {
             // Processi figli
             char operator_id[10];
-            sprintf(operator_id, "%d", i);
+            snprintf(operator_id, sizeof(operator_id), "%d", i);
             execl("./operatore", "./operatore", operator_id, NULL);
             perror("execl failed for operatore");
             exit(EXIT_FAILURE);
@@ -322,7 +322,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
     if (shm->ticket_pid > 0) {
         if (kill(shm->ticket_pid, signum) < 0) {
             char error_msg[100];
-            sprintf(error_msg, "Failed to send %s to ticket process", signal_name);
+            snprintf(error_msg, sizeof(error_msg), "Failed to send %s to ticket process", signal_name);
             perror(error_msg);
         }
     }
@@ -332,7 +332,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
         if (shm->operator_pids[i] > 0) {
             if (kill(shm->operator_pids[i], signum) < 0) {
                 char error_msg[100];
-                sprintf(error_msg, "Failed to send %s to operator %d", signal_name, i);
+                snprintf(error_msg, sizeof(error_msg), "Failed to send %s to operator %d", signal_name, i);
                 perror(error_msg);
             }
         }
@@ -343,7 +343,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
         if (shm->user_pids[i] > 0) {
             if (kill(shm->user_pids[i], signum) < 0) {
                 char error_msg[100];
-                sprintf(error_msg, "Failed to send %s to user %d", signal_name, i);
+                snprintf(error_msg, sizeof(error_msg), "Failed to send %s to user %d", signal_name, i);
                 perror(error_msg);
             }
         }
@@ -635,8 +635,8 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
     
     for (int service = 0; service < SERVICE_COUNT; service++) {
         // Array per memorizzare gli sportelli e operatori per questo servizio
-        int counters_for_service[NOF_WORKER_SEATS];
-        int operators_for_service[NOF_WORKERS];
+        int *counters_for_service = malloc(NOF_WORKER_SEATS * sizeof(int));
+        int *operators_for_service = malloc(NOF_WORKERS * sizeof(int));
         int counter_count = 0;
         int operator_count = 0;
         int active_operators_for_service_last_day = 0;
@@ -670,20 +670,22 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
         // Formatta la lista degli sportelli
         for (int i = 0; i < counter_count; i++) {
             char temp[10];
-            sprintf(temp, "%d", counters_for_service[i]);
-            strcat(counters_str, temp);
-            if (i < counter_count - 1) strcat(counters_str, ",");
+            snprintf(temp, sizeof(temp), "%d", counters_for_service[i]);
+            if (strlen(counters_str) + strlen(temp) < sizeof(counters_str) - 1) strncat(counters_str, temp, sizeof(counters_str) - strlen(counters_str) - 1);
+            if (i < counter_count - 1 && strlen(counters_str) + 1 < sizeof(counters_str) - 1) strncat(counters_str, ",", 1);
         }
-        if (counter_count == 0) strcpy(counters_str, "Nessuno");
+        if (counter_count == 0) strncpy(counters_str, "Nessuno", sizeof(counters_str) - 1);
+        counters_str[sizeof(counters_str) - 1] = '\0';
         
         // Formatta la lista degli operatori
         for (int i = 0; i < operator_count; i++) {
             char temp[10];
-            sprintf(temp, "%d", operators_for_service[i]);
-            strcat(operators_str, temp);
-            if (i < operator_count - 1) strcat(operators_str, ",");
+            snprintf(temp, sizeof(temp), "%d", operators_for_service[i]);
+            if (strlen(operators_str) + strlen(temp) < sizeof(operators_str) - 1) strncat(operators_str, temp, sizeof(operators_str) - strlen(operators_str) - 1);
+            if (i < operator_count - 1 && strlen(operators_str) + 1 < sizeof(operators_str) - 1) strncat(operators_str, ",", 1);
         }
-        if (operator_count == 0) strcpy(operators_str, "Nessuno");
+        if (operator_count == 0) strncpy(operators_str, "Nessuno", sizeof(operators_str) - 1);
+        operators_str[sizeof(operators_str) - 1] = '\0';
         
         // Calcola il rapporto
         double ratio = counter_count > 0 ? (double)operator_count / counter_count : 0.0;
@@ -695,6 +697,9 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
                ratio,
                active_operators_for_service_last_day,
                active_operators_for_service_all_days);
+        
+        free(counters_for_service);
+        free(operators_for_service);
     }
     printf("+----------------------+--------------------+--------------------+--------------------+--------------------+--------------------+\n");
     

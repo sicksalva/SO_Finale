@@ -618,8 +618,8 @@ int main(int argc, char *argv[])
                     shm_ptr->counters[i].operator_pid = getpid();
                     shm_ptr->operators[operator_id].status = OPERATOR_WORKING;
                     assigned_counter = i;
-                    printf("[OPERATORE %d] Assegnato allo sportello %d per il servizio %s\n", 
-                           operator_id, i, SERVICE_NAMES[random_service]);
+                    // DEBUG: Stampa assegnazione
+                    //printf("[OPERATORE %d] Assegnato allo sportello %d per il servizio %s\n", operator_id, i, SERVICE_NAMES[random_service]);
                     break;
                 }
             }

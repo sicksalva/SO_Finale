@@ -17,16 +17,16 @@
 #define SIM_DURATION 5          // Total number of days to simulate
 #define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Total seconds before timeout
 #define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanoseconds per simulated minute
-#define BREAK_PROBABILITY 5 //Probability of taking a break (%)
+#define BREAK_PROBABILITY 0 //Probability of taking a break (%)
 
 // Simulation parameters
 #define NOF_WORKERS 300         // Number of operator processes
-#define NOF_USERS 5000         // Reduced to a more manageable number for system resources
-#define NOF_WORKER_SEATS 200
+#define NOF_USERS 700         // Reduced to a more manageable number for system resources
+#define NOF_WORKER_SEATS 300
 #define NOF_PAUSE 5
 #define P_SERV_MIN 100            // da 0 a 100!!! Non è decimale
 #define P_SERV_MAX 100       
-#define EXPLODE_THRESHOLD 500
+#define EXPLODE_THRESHOLD 1000
 
 // Working hours (in minutes from start of day)
 #define OFFICE_OPEN_TIME 0      // Office opens at start of day
