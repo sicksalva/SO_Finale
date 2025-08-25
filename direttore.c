@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/time.h>
-#include <signal.h> // Needed for signal handling
+#include <signal.h> // Necessario per la gestione dei segnali
 #include <time.h>
 #include <sys/msg.h>
 #include <sys/types.h>
@@ -20,7 +20,7 @@ int shmid = -1;
 int semid = -1;
 SharedMemory *shared_memory = NULL;
 volatile sig_atomic_t alarm_triggered = 0; // Flag per l'alarm handler
-volatile sig_atomic_t cleanup_in_progress = 0; // Flag to prevent re-entrancy
+volatile sig_atomic_t cleanup_in_progress = 0; // Flag per prevenire re-entrata
 
 // Handler per SIGALRM
 void alarm_handler(int signum __attribute__((unused))) {
@@ -38,7 +38,7 @@ void cleanup_handler(int signum __attribute__((unused))) {
 
     // 1. Termina tutti i processi figli
     if (shared_memory != NULL && shared_memory != (void *)-1) {
-        // Termina ticket process
+        // Termina il processo ticket
         if (shared_memory->ticket_pid > 0) {
             kill(shared_memory->ticket_pid, SIGTERM);
         }
@@ -132,7 +132,7 @@ void create_users(SharedMemory *shm_ptr)
         }
         else
         {
-            // Parent process: Store the PID in shared memory
+            // Processo padre: Memorizza il PID nella memoria condivisa
             shm_ptr->user_pids[i] = user_pid;
         }
     }
@@ -155,7 +155,7 @@ void create_ticket_process(SharedMemory *shm_ptr)
     }
     else
     {
-        // Parent process: Store the PID in shared memory
+        // Processo genitore: Memorizza il PID in memoria condivisa
         shm_ptr->ticket_pid = ticket_pid;
     }
 }
@@ -191,12 +191,12 @@ void create_operators(SharedMemory *shm_ptr)
         }
         else
         {
-            // Parent process: Store the PID
+            // Processo padre: Memorizza il PID
             shm_ptr->operator_pids[i] = operator_pid;
             shm_ptr->operators[i].pid = operator_pid;
         }
     }
-    printf("All operators created successfully.\n");
+    printf("Tutti gli operatori creati con successo.\n");
 }
 
 // Inizializza gli sportelli con servizi casuali all'inizio di ogni giornata
@@ -215,11 +215,10 @@ void initialize_counters_for_day(SharedMemory *shm_ptr)
         shm_ptr->counters[counter_idx].operator_pid = 0;
         shm_ptr->counters[counter_idx].total_served = 0;
         
-        printf("Sportello %d: Servizio %s (%d)\n", 
-               counter_idx, SERVICE_NAMES[random_service], random_service);
+        // DEBUG: stampa l'inizializzazione dello sportello
+        //printf("Sportello %d: Servizio %s (%d)\n", counter_idx, SERVICE_NAMES[random_service], random_service);
     }
 
-    printf("All counters initialized for day %d.\n", shm_ptr->simulation_day);
 }
 
 // Funzione per gestire la condizione di "esplosione"
@@ -256,7 +255,7 @@ void count_remaining_tickets(SharedMemory *shm) {
 
 // Funzione per svuotare tutte le code alla fine della giornata
 void clear_all_queues_at_day_end(SharedMemory *shm) {
-    printf("[RESET] Svuotamento di tutte le code alla fine della giornata %d\n", shm->simulation_day);
+    //printf("[RESET] Svuotamento di tutte le code alla fine della giornata %d\n", shm->simulation_day);
     
     // Svuota tutte le code dei servizi
     for (int service = 0; service < SERVICE_COUNT; service++) {
@@ -276,35 +275,88 @@ void clear_all_queues_at_day_end(SharedMemory *shm) {
     
 }
 
-// Funzione per stampare il riepilogo giornaliero
+// Funzione per stampare il riepilogo giornaliero unificato
 void print_daily_summary(SharedMemory *shm_ptr) {
-    // Tabella 1: Statistiche sugli utenti
-    printf("\n+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
-    printf("| STATISTICHE GIORNO %-3d                                                                          |\n", shm_ptr->simulation_day);
-    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
-    printf("|      Servizio       |  Utenti Serviti      |  Tornati a Casa      | Ticket Non Ricevuti  |  Servizio Interrotto |\n");
-    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+    // Calcola il numero di giorni completati
+    int days_completed = shm_ptr->simulation_day;
+    
+    // Calcola i valori SOLO del giorno corrente
+    int daily_users_served = 0;
+    int daily_services_not_provided = 0;
+    int daily_users_not_presented = 0;
+    
+    // Somma tutti i servizi del giorno corrente
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        daily_users_served += shm_ptr->daily_tickets_served[i];
+        daily_services_not_provided += shm_ptr->daily_users_home[i] + shm_ptr->daily_users_timeout[i] + shm_ptr->daily_users_no_ticket[i];
+        daily_users_not_presented += shm_ptr->daily_users_not_arrived[i];
+    }
+    
+    // Valori totali della simulazione
+    int total_services_not_provided = shm_ptr->total_services_not_provided_simulation;
+    int total_users_not_presented = shm_ptr->total_users_not_arrived;
+    
+    // Tabella unificata: Giornaliero | Totale Simulazione | Media Cumulativa
+    printf("\n+----------------------+--------------------+--------------------+--------------------+\n");
+    printf("| STATISTICHE UNIFICATE GIORNO %-3d                                         |\n", shm_ptr->simulation_day);
+    printf("+----------------------+--------------------+--------------------+--------------------+\n");
+    printf("|     Descrizione      |    Giornaliero     | Totale Simulazione |  Media Cumulativa  |\n");
+    printf("+----------------------+--------------------+--------------------+--------------------+\n");
+    
+    // Riga Utenti Serviti
+    double avg_users_served = days_completed > 0 ? (double)shm_ptr->total_users_served_simulation / days_completed : 0.0;
+    printf("| Utenti Serviti       | %-18d | %-18d | %-18.2f |\n", 
+           daily_users_served,  // SOLO del giorno corrente
+           shm_ptr->total_users_served_simulation, 
+           avg_users_served);
+    
+    // Riga Servizi Non Erogati 
+    double avg_services_not_provided = days_completed > 0 ? (double)total_services_not_provided / days_completed : 0.0;
+    printf("| Servizi Non Erogati  | %-18d | %-18d | %-18.2f |\n", 
+           daily_services_not_provided,  // SOLO del giorno corrente
+           total_services_not_provided, 
+           avg_services_not_provided);
+    
+    // Riga Utenti Non Presentati
+    double avg_users_not_presented = days_completed > 0 ? (double)total_users_not_presented / days_completed : 0.0;
+    printf("| Utenti Non Presentati| %-18d | %-18d | %-18.2f |\n", 
+           daily_users_not_presented,  // SOLO del giorno corrente
+           total_users_not_presented, 
+           avg_users_not_presented);
+    
+    printf("+----------------------+--------------------+--------------------+--------------------+\n");
+    
+    // Tabella dettagliata per servizio (solo giornaliera)
+    printf("\n+----------------------+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+    printf("| DETTAGLIO PER SERVIZIO - GIORNO %-3d                                                                               |\n", shm_ptr->simulation_day);
+    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+    printf("|      Servizio       |  Utenti Serviti      |  Tornati a Casa      | Ticket Non Ricevuti  |  Servizio Interrotto |   Non Presentati    |\n");
+    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
 
     int total_timeout = 0;
     int total_no_ticket = 0;
+    int total_not_arrived = 0;
     for (int i = 0; i < SERVICE_COUNT; i++) {
-        printf("| %-20s | %-20d | %-20d | %-20d | %-20d |\n",
+        printf("| %-20s | %-20d | %-20d | %-20d | %-20d | %-20d |\n",
                SERVICE_NAMES[i],
                shm_ptr->daily_tickets_served[i],
                shm_ptr->daily_users_home[i],
                shm_ptr->daily_users_no_ticket[i],
-               shm_ptr->daily_users_timeout[i]);
+               shm_ptr->daily_users_timeout[i],
+               shm_ptr->daily_users_not_arrived[i]);
         total_timeout += shm_ptr->daily_users_timeout[i];
         total_no_ticket += shm_ptr->daily_users_no_ticket[i];
+        total_not_arrived += shm_ptr->daily_users_not_arrived[i];
     }
 
-    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
-    printf("| Totale               | %-20d | %-20d | %-20d | %-20d |\n",
-           shm_ptr->total_tickets_served,
+    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+    printf("| Totale               | %-20d | %-20d | %-20d | %-20d | %-20d |\n",
+           daily_users_served,  // Usa il valore giornaliero calcolato
            shm_ptr->total_users_home,
            total_no_ticket,
-           total_timeout);
-    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
+           total_timeout,
+           total_not_arrived);
+    printf("+----------------------+----------------------+----------------------+----------------------+----------------------+----------------------+\n");
 }
 
 // Funzione per notificare tutti i processi con un segnale specifico
@@ -322,7 +374,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
     if (shm->ticket_pid > 0) {
         if (kill(shm->ticket_pid, signum) < 0) {
             char error_msg[100];
-            snprintf(error_msg, sizeof(error_msg), "Failed to send %s to ticket process", signal_name);
+            snprintf(error_msg, sizeof(error_msg), "Impossibile inviare %s al processo ticket", signal_name);
             perror(error_msg);
         }
     }
@@ -332,7 +384,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
         if (shm->operator_pids[i] > 0) {
             if (kill(shm->operator_pids[i], signum) < 0) {
                 char error_msg[100];
-                snprintf(error_msg, sizeof(error_msg), "Failed to send %s to operator %d", signal_name, i);
+                snprintf(error_msg, sizeof(error_msg), "Impossibile inviare %s all'operatore %d", signal_name, i);
                 perror(error_msg);
             }
         }
@@ -343,7 +395,7 @@ void notify_all_processes(SharedMemory *shm, int signum) {
         if (shm->user_pids[i] > 0) {
             if (kill(shm->user_pids[i], signum) < 0) {
                 char error_msg[100];
-                snprintf(error_msg, sizeof(error_msg), "Failed to send %s to user %d", signal_name, i);
+                snprintf(error_msg, sizeof(error_msg), "Impossibile inviare %s all'utente %d", signal_name, i);
                 perror(error_msg);
             }
         }
@@ -352,9 +404,15 @@ void notify_all_processes(SharedMemory *shm, int signum) {
 
 // Funzione per raccogliere le statistiche di fine giornata
 void collect_daily_statistics(SharedMemory *shm, int day_index) {
+    // Calcola gli utenti serviti SOLO per questo giorno
+    int daily_users_served = 0;
+    for (int i = 0; i < SERVICE_COUNT; i++) {
+        daily_users_served += shm->daily_tickets_served[i];
+    }
+    
     // Raccoglie le statistiche aggregate della giornata
-    shm->users_served_per_day[day_index] = shm->total_tickets_served;
-    shm->total_users_served_simulation += shm->total_tickets_served;
+    shm->users_served_per_day[day_index] = daily_users_served;
+    shm->total_users_served_simulation += daily_users_served;  // Aggiunge solo quelli del giorno corrente
     
     // Calcola servizi non erogati totali per questa giornata
     int daily_services_not_provided = 0;
@@ -404,10 +462,19 @@ void collect_daily_statistics(SharedMemory *shm, int day_index) {
         daily_total_pauses += shm->operators[i].total_pauses;
     }
     
-    // Calcola le pause di un giorno (pause totale - pause fino a ieri)
-    int pauses_for_this_day_only = daily_total_pauses;
-    if (day_index > 0) {
-        pauses_for_this_day_only = daily_total_pauses - shm->total_pauses_simulation;
+    // Calcola le pause SOLO di questo giorno
+    int pauses_for_this_day_only = 0;
+    if (day_index == 0) {
+        // Primo giorno: usa il totale corrente
+        pauses_for_this_day_only = daily_total_pauses;
+    } else {
+        // Giorni successivi: calcola la differenza tra totale corrente e totale simulazione precedente
+        int previous_total = shm->total_pauses_simulation;
+        pauses_for_this_day_only = daily_total_pauses - previous_total;
+        // Assicurati che non sia mai negativo
+        if (pauses_for_this_day_only < 0) {
+            pauses_for_this_day_only = 0;
+        }
     }
     
     shm->operators_active_per_day[day_index] = daily_operators_active;
@@ -505,16 +572,20 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
         double min_service_time_min = shm->min_service_time[i] == LONG_MAX ? 0 : nanoseconds_to_simulated_minutes(shm->min_service_time[i]);
         double max_service_time_min = nanoseconds_to_simulated_minutes(shm->max_service_time[i]);
         
-        printf("| %-20s | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f | %8.3f |\n",
-               SERVICE_NAMES[i], 
-               avg_service_time_daily,           // Tempo medio giornaliero (secondi)
-               avg_service_time_simulation,      // Tempo medio simulazione (secondi)
-               avg_service_time_daily_min,       // Tempo medio giornaliero (minuti simulati)
-               avg_service_time_simulation_min,  // Tempo medio simulazione (minuti simulati)
-               min_service_time_sec,             // Tempo minimo (secondi)
-               min_service_time_min,             // Tempo minimo (minuti simulati)
-               max_service_time_sec,             // Tempo massimo (secondi)
-               max_service_time_min);            // Tempo massimo (minuti simulati)
+        // Buffer per formattare i valori
+        char val1[10], val2[10], val3[10], val4[10], val5[10], val6[10], val7[10], val8[10];
+        
+        snprintf(val1, sizeof(val1), avg_service_time_daily > 0 ? "%.3f" : "N/A", avg_service_time_daily);
+        snprintf(val2, sizeof(val2), avg_service_time_simulation > 0 ? "%.3f" : "N/A", avg_service_time_simulation);
+        snprintf(val3, sizeof(val3), avg_service_time_daily_min > 0 ? "%.3f" : "N/A", avg_service_time_daily_min);
+        snprintf(val4, sizeof(val4), avg_service_time_simulation_min > 0 ? "%.3f" : "N/A", avg_service_time_simulation_min);
+        snprintf(val5, sizeof(val5), min_service_time_sec > 0 ? "%.3f" : "N/A", min_service_time_sec);
+        snprintf(val6, sizeof(val6), min_service_time_min > 0 ? "%.3f" : "N/A", min_service_time_min);
+        snprintf(val7, sizeof(val7), max_service_time_sec > 0 ? "%.3f" : "N/A", max_service_time_sec);
+        snprintf(val8, sizeof(val8), max_service_time_min > 0 ? "%.3f" : "N/A", max_service_time_min);
+        
+        printf("| %-20s | %8s | %8s | %8s | %8s | %8s | %8s | %8s | %8s |\n",
+               SERVICE_NAMES[i], val1, val2, val3, val4, val5, val6, val7, val8);
     }
     
     printf("+----------------------+----------+----------+----------+----------+----------+----------+----------+----------+\n");
@@ -524,7 +595,7 @@ void print_service_timing_statistics_table(SharedMemory *shm, int days_completed
 void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
     printf("\n");
     printf("================================================================================\n");
-    printf("                        STATISTICHE COMPLETE DELLA SIMULAZIONE\n");
+    printf("                     STATISTICHE DETTAGLIATE DELLA SIMULAZIONE\n");
     printf("================================================================================\n");
     
     // Calcoli preliminari
@@ -555,59 +626,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
         avg_operators_per_day /= days_completed;
     }
     
-    // TABELLA 1: STATISTICHE UTENTI E SERVIZI (TOTALI E MEDIE)
-    printf("\n+--------------------------------+--------------------+--------------------+\n");
-    printf("| STATISTICHE UTENTI E SERVIZI                                             |\n");
-    printf("+--------------------------------+--------------------+--------------------+\n");
-    printf("| Descrizione                    | Totale Simulazione | Media Cumulativa   |\n");
-    printf("+--------------------------------+--------------------+--------------------+\n");
-    printf("| Utenti Serviti                 | %-18d | %-18.2f |\n", 
-           shm->total_users_served_simulation, days_completed > 0 ? shm->cumulative_avg_users_served[days_completed - 1] : 0.0);
-    printf("| Servizi Non Erogati            | %-18d | %-18.2f |\n", 
-           shm->total_services_not_provided_simulation, days_completed > 0 ? shm->cumulative_avg_services_not_provided[days_completed - 1] : 0.0);
-    printf("+--------------------------------+--------------------+--------------------+\n");
-    
-    // TABELLA 2: STATISTICHE PER TIPOLOGIA DI SERVIZIO
-    printf("\n+----------------------+----------+----------+----------+----------+\n");
-    printf("| STATISTICHE PER TIPOLOGIA DI SERVIZIO                       |\n");
-    printf("+----------------------+----------+----------+----------+----------+\n");
-    printf("|      Servizio        |  Utenti  |  Media   | Servizi  |  Media   |\n");
-    printf("|                      |  Serviti |  Utenti  | Non Erog.|  Servizi |\n");
-    printf("|                      |  Totale  |  Al      | Totale   |  Al      |\n");
-    printf("|                      |          |  Giorno  |          |  Giorno  |\n");
-    printf("+----------------------+----------+----------+----------+----------+\n");
-    
-    for (int i = 0; i < SERVICE_COUNT; i++) {
-        int total_users_served_service = 0;
-        int total_services_not_provided_service = 0;
-        long total_service_time_service = 0;
-        int total_service_count_service = 0;
-        
-        // Calcola statistiche per tutta la simulazione
-        for (int day = 0; day < SIM_DURATION; day++) {
-            total_users_served_service += shm->users_served_per_service_per_day[i][day];
-            total_services_not_provided_service += shm->services_not_provided_per_service_per_day[i][day];
-            total_service_time_service += shm->total_service_time_per_service_per_day[i][day];
-            total_service_count_service += shm->service_count_per_service_per_day[i][day];
-        }
-        
-        // Calcola la media giornaliera degli utenti serviti
-        double avg_users_served_per_day = days_completed > 0 ? (double)total_users_served_service / days_completed : 0.0;
-        
-        // Calcola la media giornaliera dei servizi non erogati
-        double avg_services_not_provided_per_day = days_completed > 0 ? (double)total_services_not_provided_service / days_completed : 0.0;
-        
-        printf("| %-20s | %8d | %8.2f | %8d | %8.2f |\n",
-               SERVICE_NAMES[i], 
-               total_users_served_service,
-               avg_users_served_per_day,        // Media utenti serviti al giorno
-               total_services_not_provided_service,
-               avg_services_not_provided_per_day); // Media servizi non erogati al giorno
-    }
-    
-    printf("+----------------------+----------+----------+----------+----------+\n");
-    
-    // TABELLA 3: RAPPORTO OPERATORI/SPORTELLI PER SERVIZIO (ultima giornata)
+    // TABELLA 1: RAPPORTO OPERATORI/SPORTELLI PER SERVIZIO (ultima giornata)
     printf("\n+----------------------+--------------------+--------------------+--------------------+--------------------+--------------------+\n");
     printf("| RAPPORTO OPERATORI/SPORTELLI PER SERVIZIO (ultima giornata)                                                               |\n");
     printf("+----------------------+--------------------+--------------------+--------------------+--------------------+--------------------+\n");
@@ -672,7 +691,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
             char temp[10];
             snprintf(temp, sizeof(temp), "%d", counters_for_service[i]);
             if (strlen(counters_str) + strlen(temp) < sizeof(counters_str) - 1) strncat(counters_str, temp, sizeof(counters_str) - strlen(counters_str) - 1);
-            if (i < counter_count - 1 && strlen(counters_str) + 1 < sizeof(counters_str) - 1) strncat(counters_str, ",", 1);
+            if (i < counter_count - 1 && strlen(counters_str) + 2 < sizeof(counters_str)) strncat(counters_str, ",", sizeof(counters_str) - strlen(counters_str) - 1);
         }
         if (counter_count == 0) strncpy(counters_str, "Nessuno", sizeof(counters_str) - 1);
         counters_str[sizeof(counters_str) - 1] = '\0';
@@ -682,7 +701,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
             char temp[10];
             snprintf(temp, sizeof(temp), "%d", operators_for_service[i]);
             if (strlen(operators_str) + strlen(temp) < sizeof(operators_str) - 1) strncat(operators_str, temp, sizeof(operators_str) - strlen(operators_str) - 1);
-            if (i < operator_count - 1 && strlen(operators_str) + 1 < sizeof(operators_str) - 1) strncat(operators_str, ",", 1);
+            if (i < operator_count - 1 && strlen(operators_str) + 2 < sizeof(operators_str)) strncat(operators_str, ",", sizeof(operators_str) - strlen(operators_str) - 1);
         }
         if (operator_count == 0) strncpy(operators_str, "Nessuno", sizeof(operators_str) - 1);
         operators_str[sizeof(operators_str) - 1] = '\0';
@@ -713,7 +732,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
            total_pauses_simulation);
     printf("+----------------------+--------------------+--------------------+--------------------+--------------------+--------------------+\n");
     
-    // TABELLA 4: STATISTICHE GENERALI OPERATORI E PAUSE
+    // TABELLA 2: STATISTICHE GENERALI OPERATORI E PAUSE
     printf("\n+--------------------------------+--------------------+--------------------+--------------------+\n");
     printf("| STATISTICHE OPERATORI E PAUSE                                                              |\n");
     printf("+--------------------------------+--------------------+--------------------+--------------------+\n");
@@ -731,7 +750,7 @@ void print_comprehensive_statistics(SharedMemory *shm, int days_completed) {
            days_completed > 0 && total_operators_active_simulation > 0 ? (double)total_pauses_simulation / days_completed / (total_operators_active_simulation / days_completed) : 0.0);
     printf("+--------------------------------+--------------------+--------------------+--------------------+\n");
     
-    // TABELLA 5: STATISTICHE TEMPI DI ATTESA
+    // TABELLA 3: STATISTICHE TEMPI DI ATTESA
     printf("\n+----------------------+----------+----------+----------+----------+----------+----------+\n");
     printf("| STATISTICHE TEMPI DI ATTESA (TOTALI SIMULAZIONE)                                      |\n");
     printf("+----------------------+----------+----------+----------+----------+----------+----------+\n");
@@ -838,10 +857,12 @@ void initialize_statistics(SharedMemory *shm) {
     shm->total_services_provided_simulation = 0;
     shm->total_services_not_provided_simulation = 0;
     shm->total_pauses_simulation = 0;
+    shm->total_users_not_arrived = 0;
     
     // Inizializza le somme totali degli operatori attivi per servizio
     for (int i = 0; i < SERVICE_COUNT; i++) {
         shm->operators_active_per_service_total[i] = 0;
+        shm->total_users_not_arrived_per_service[i] = 0;
     }
     
     // Inizializza gli array delle statistiche giornaliere aggregate
@@ -911,10 +932,12 @@ void reset_daily_state(SharedMemory *shm, int semid) {
     memset(shm->daily_users_home, 0, sizeof(int) * SERVICE_COUNT);
     memset(shm->daily_users_timeout, 0, sizeof(int) * SERVICE_COUNT);
     memset(shm->daily_users_no_ticket, 0, sizeof(int) * SERVICE_COUNT);
+    memset(shm->daily_users_not_arrived, 0, sizeof(int) * SERVICE_COUNT);
     shm->total_tickets_served = 0;
     shm->total_users_home = 0;
     shm->total_users_timeout = 0;
     shm->total_users_no_ticket = 0;
+    // NON resettiamo shm->total_users_not_arrived e shm->total_users_not_arrived_per_service perché sono cumulativi
     
     // Resetta le statistiche sui tempi di attesa
     for (int i = 0; i < SERVICE_COUNT; i++) {
@@ -935,8 +958,10 @@ void reset_daily_state(SharedMemory *shm, int semid) {
         
         // Azzera anche i contatori giornalieri
         shm->daily_users_timeout[i] = 0;
+        shm->daily_users_not_arrived[i] = 0;
     }
     shm->total_users_timeout = 0;
+    // NON resettiamo shm->total_users_not_arrived perché è cumulativo
     
     // Resetta anche le statistiche aggregate sui tempi di attesa
     shm->daily_total_wait_time_all = 0;
@@ -1107,11 +1132,11 @@ int main()
         // Svuota tutte le code alla fine della giornata
         clear_all_queues_at_day_end(shared_memory);
 
+        // Raccogli le statistiche giornaliere PRIMA di stampare
+        collect_daily_statistics(shared_memory, day);
+
         // Stampa il riepilogo giornaliero (sulla giornata, non sulla simulazione)
         print_daily_summary(shared_memory);
-
-        // Raccogli le statistiche giornaliere
-        collect_daily_statistics(shared_memory, day);
         
         // Stampa tutte le statistiche complete alla fine di ogni giorno
         print_comprehensive_statistics(shared_memory, day + 1);

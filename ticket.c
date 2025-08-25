@@ -14,19 +14,17 @@
 #include <sys/time.h>  // Per gettimeofday()
 #include "config.h"
 
-// Global variables
+// Variabili globali
 SharedMemory *shm_ptr = NULL;
 int semid = -1;
 int shmid = -1;
 volatile int running = 1;
-volatile int simulation_active = 1;
 volatile int day_in_progress = 0;
-volatile int current_day = 0;
 
 // Variabile globale per la coda di messaggi
 int msgid = -1;
 
-// Signal handler for termination
+// Gestore segnale per la terminazione
 void termination_handler(int signum __attribute__((unused)))
 {
     running = 0;
@@ -65,12 +63,11 @@ void reset_daily_counters() {
     }
 }
 
-// Implementiamo un handler per il segnale di inizio giornata
+// Handler per il segnale di inizio giornata
 void day_start_handler(int signum __attribute__((unused)))
 {
-    // Do not increment current_day here - it should be managed by the director
+    // Il reset verrà fatto nel loop principale per evitare duplicazioni
     day_in_progress = 1;
-    reset_daily_counters();
 }
 
 // Handler per la fine della giornata
@@ -79,15 +76,11 @@ void day_end_handler(int signum __attribute__((unused)))
     day_in_progress = 0;
 }
 
-
-
-
-
-// Nuova funzione per elaborare direttamente i messaggi di richiesta ticket usando request_index
+// Funzione per elaborare direttamente i messaggi di richiesta ticket usando request_index
 void process_new_ticket_request(TicketRequestMsg *msg)
 {
     // CONTROLLO CRITICO: Verifica che la giornata sia ancora in corso
-    if (!shm_ptr->day_in_progress || !day_in_progress) {
+    if (!shm_ptr->day_in_progress) {
         printf("Ticket: [REJECTED] Richiesta da utente %d rifiutata - giornata terminata\n", msg->user_id);
         
         // Notifica l'utente che la richiesta è stata rifiutata
@@ -117,10 +110,10 @@ void process_new_ticket_request(TicketRequestMsg *msg)
         return;
     }
 
-    // Update request status to processing
+    // Aggiorna lo stato della richiesta a elaborazione in corso
     request->status = REQUEST_PROCESSING;
 
-    // Acquire mutex for ticket queues
+    // Acquisisce il mutex per le code dei ticket
     struct sembuf sem_op;
     sem_op.sem_num = SEM_QUEUE;
     sem_op.sem_op = -1; // Lock
@@ -133,21 +126,21 @@ void process_new_ticket_request(TicketRequestMsg *msg)
         return;
     }
 
-    // Get the next ticket number for this specific service
+    // Ottiene il prossimo numero di ticket per questo servizio specifico
     int service_id = request->service_id;
     int ticket_number = shm_ptr->next_service_ticket[service_id]++;
 
-    // Add ticket to the appropriate service queue
+    // Aggiunge il ticket alla coda del servizio appropriata
     int queue_pos = shm_ptr->service_queue_tail[service_id];
     shm_ptr->service_queues[service_id][queue_pos] = request_index;
 
-    // Update queue tail (circular buffer)
+    // Aggiorna la coda di coda (buffer circolare)
     shm_ptr->service_queue_tail[service_id] = (queue_pos + 1) % MAX_SERVICE_QUEUE;
 
-    // Update ticket count for this service
+    // Aggiorna il conteggio dei ticket per questo servizio
     shm_ptr->service_tickets_waiting[service_id]++;
 
-    // Release the mutex
+    // Rilascia il mutex
     sem_op.sem_num = SEM_QUEUE;
     sem_op.sem_op = 1; // Unlock
     sem_op.sem_flg = 0;
@@ -155,13 +148,13 @@ void process_new_ticket_request(TicketRequestMsg *msg)
     if (semop(semid, &sem_op, 1) < 0)
     {
         perror("Ticket: Failed to release queue mutex");
-        // We continue anyway as the critical section is done
+        // Continuiamo comunque poiché la sezione critica è completata
     }
     
     // Notifica gli operatori che c'è un nuovo ticket disponibile
     struct sembuf ticket_ready_signal;
     ticket_ready_signal.sem_num = SEM_TICKET_READY;
-    ticket_ready_signal.sem_op = 1; // Signal (V operation)
+    ticket_ready_signal.sem_op = 1; // Signal (operazione V)
     ticket_ready_signal.sem_flg = 0;
     
     if (semop(semid, &ticket_ready_signal, 1) < 0)
@@ -180,15 +173,15 @@ void process_new_ticket_request(TicketRequestMsg *msg)
         }
     }
 
-    // Generate the ticket identifier (e.g., L1, B1, etc.)
+    // Genera l'identificativo del ticket (es. L1, B1, ecc.)
     char ticket_id[10];
     sprintf(ticket_id, "%c%d", SERVICE_PREFIXES[service_id], ticket_number);
 
-    // Update the request with ticket info
+    // Aggiorna la richiesta con le informazioni del ticket
     request->ticket_number = ticket_number;
-    request->status = REQUEST_COMPLETED; // Ticket generation completed
+    request->status = REQUEST_COMPLETED; // Generazione ticket completata
     strncpy(request->ticket_id, ticket_id, sizeof(request->ticket_id) - 1);
-    request->ticket_id[sizeof(request->ticket_id) - 1] = '\0'; // Ensure null termination
+    request->ticket_id[sizeof(request->ticket_id) - 1] = '\0'; // Assicura terminazione null
 
     //printf("Ticket: Assigned ticket %s to user %d for service %s\n",
     //       ticket_id, request->user_id, SERVICE_NAMES[request->service_id]);
@@ -203,15 +196,15 @@ void process_new_ticket_request(TicketRequestMsg *msg)
 
 int main()
 {
-    // Set up signal handlers
-    signal(SIGTERM, termination_handler); // Termination signal
+    // Imposta i gestori di segnale
+    signal(SIGTERM, termination_handler); // Segnale di terminazione
     signal(SIGINT, termination_handler);  // Ctrl+C
-    signal(SIGUSR1, day_start_handler);   // Start of day
-    signal(SIGUSR2, day_end_handler);     // End of day
+    signal(SIGUSR1, day_start_handler);   // Inizio del giorno
+    signal(SIGUSR2, day_end_handler);     // Fine del giorno
 
     //printf("Ticket process starting...\n");
 
-    // Attach to shared memory
+    // Attacca alla memoria condivisa
     shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
     if (shmid == -1)
     {
@@ -226,7 +219,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    // Get access to semaphores
+    // Ottieni accesso ai semafori
     semid = semget(SEM_KEY, NUM_SEMS, 0666);
     if (semid == -1)
     {
@@ -243,7 +236,7 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    // Store our PID in shared memory
+    // Memorizza il nostro PID nella memoria condivisa
     shm_ptr->ticket_pid = getpid();
 
     // Inizializzazione iniziale
@@ -259,16 +252,16 @@ int main()
         exit(EXIT_FAILURE);
     }
 
-    // Initialize service queues
+    // Inizializza le code dei servizi
     for (int i = 0; i < SERVICE_COUNT; i++)
     {
         if (shm_ptr->next_service_ticket[i] == 0)
         {
-            shm_ptr->next_service_ticket[i] = 1; // Start each service with ticket #1
+            shm_ptr->next_service_ticket[i] = 1; // Inizia ogni servizio con ticket #1
         }
     }
 
-    // Release the mutex
+    // Rilascia il mutex
     sem_op.sem_num = SEM_QUEUE;
     sem_op.sem_op = 1; // Unlock
     sem_op.sem_flg = 0;
@@ -384,7 +377,7 @@ int main()
 
     if (shm_ptr != NULL && shm_ptr != (void *)-1)
     {
-        shm_ptr->ticket_pid = 0; // Clear our PID from shared memory
+        shm_ptr->ticket_pid = 0; // Pulisce il nostro PID dalla memoria condivisa
         shmdt(shm_ptr);
     }
 

@@ -31,7 +31,7 @@ void cleanup_resources() {
     }
 }
 
-// Handler per la terminazione della simulazione
+// Gestore per la terminazione della simulazione
 void end_simulation_handler(int signum __attribute__((unused)))
 {
     simulation_active = 0;
@@ -39,7 +39,7 @@ void end_simulation_handler(int signum __attribute__((unused)))
     exit(EXIT_SUCCESS);
 }
 
-// Restituisce se l'utente arriva (e se arriva il servizio scelto)
+// Determina se l'utente arriva (e se arriva il servizio scelto)
 int determine_arrival_and_service(int personal_probability)
 {
     // Lancia un dado da 1 a 100 per decidere se l'utente arriva
@@ -72,7 +72,7 @@ int determine_arrival_time()
     return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
 }
 
-// Converti minuti simulati in secondi reali
+// Converti minuti simulati in secondi reali di simulazione
 double minutes_to_simulation_seconds(int minutes)
 {
     return ((double)minutes / WORK_DAY_MINUTES) * DAY_SIMULATION_TIME;
@@ -81,13 +81,13 @@ double minutes_to_simulation_seconds(int minutes)
 // Funzione per richiedere un ticket dal processo di gestione ticket
 int request_ticket(int user_id, int service_id)
 {
-    // Processo ticket attivo
+    // Verifica se il processo ticket è attivo
     if (shm_ptr == NULL || shm_ptr->ticket_pid <= 0)
     {
         return -1;
     }
 
-    // Accesso coda messaggi
+    // Accesso alla coda di messaggi
     if (msgid == -1)
     {
         msgid = msgget(MSG_QUEUE_KEY, 0666);
@@ -98,7 +98,7 @@ int request_ticket(int user_id, int service_id)
         }
     }
 
-    // Acquisire il mutex per creare la richiesta in shared memory
+    // Acquisisce il mutex per creare la richiesta in memoria condivisa
     struct sembuf sem_op;
     sem_op.sem_num = SEM_QUEUE;
     sem_op.sem_op = -1; // Lock
@@ -180,7 +180,7 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
         }
     }
 
-    // Registra un signal handler temporaneo per SIGUSR1 come notifica da ticket
+    // Registra un gestore di segnale temporaneo per SIGUSR1 come notifica da ticket
     struct sigaction sa_ticket;
     memset(&sa_ticket, 0, sizeof(sa_ticket));
     sa_ticket.sa_handler = SIG_IGN; // Imposta l'handler a SIG_IGN per evitare la terminazione di default
@@ -205,16 +205,16 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
     timeout.tv_sec = 0;
     timeout.tv_nsec = 200000000; // 200ms
     
-    // Loop principale: attende SIUGUSR1 (ticket) o SIGUSR2 (fine giornata)
+    // Loop principale: attende SIGUSR1 (ticket) o SIGUSR2 (fine giornata)
     while (shm_ptr->day_in_progress && simulation_active)
     {
-        // Attendere un segnale o il timeout
+        // Attende un segnale o il timeout
         int sig = sigtimedwait(&wait_set, NULL, &timeout);
         
         // Controlla lo stato della richiesta dopo il segnale o il timeout
         if (shm_ptr->ticket_requests[request_index].status == REQUEST_COMPLETED)
         {
-            // Ricevuto il ticket con successo (tolgo mascheramento)
+            // Ricevuto il ticket con successo (rimuove mascheramento)
             sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
             return 0; 
         }
@@ -231,7 +231,7 @@ int handle_post_office_visit(int user_id, int service_id, int request_index)
         }
     }
    
-    // Break riga 228 -> contiamo come non servito (e non come tornato a casa)
+    // Break alla riga 228 -> contiamo come non servito (e non come tornato a casa)
     struct sembuf sem_op;
     sem_op.sem_num = SEM_MUTEX;
     sem_op.sem_op = -1; // Lock
@@ -262,10 +262,10 @@ int is_service_available(SharedMemory *shm, int service_id)
 {
     for (int i = 0; i < NOF_WORKER_SEATS; i++)
     {
-        // Controlla sportello attivo 
+        // Controlla se lo sportello è attivo
         if (shm->counters[i].active && shm->counters[i].current_service == (ServiceType)service_id)
         {
-            // Controlla operatore attivo
+            // Controlla se c'è un operatore attivo
             if (shm->counters[i].operator_pid > 0)
             {
                 for (int j = 0; j < NOF_WORKERS; j++)
@@ -281,7 +281,7 @@ int is_service_available(SharedMemory *shm, int service_id)
     return 0;
 }
 
-// Incrementa utenti tornati a casa senza servizio
+// Incrementa conteggio utenti tornati a casa senza servizio
 void increment_users_home_stats(int service_id) {
 
     struct sembuf sem_op;
@@ -292,6 +292,26 @@ void increment_users_home_stats(int service_id) {
     if (semop(semid, &sem_op, 1) == 0) {
         shm_ptr->daily_users_home[service_id]++;
         shm_ptr->total_users_home++;
+        
+        // Rilascia il mutex
+        sem_op.sem_op = 1; // Unlock
+        semop(semid, &sem_op, 1);
+    }
+}
+
+// Incrementa conteggio utenti che non si sono presentati all'ufficio postale
+void increment_users_not_arrived_stats() {
+    struct sembuf sem_op;
+    sem_op.sem_num = SEM_MUTEX;
+    sem_op.sem_op = -1; // Lock
+    sem_op.sem_flg = 0;
+    
+    if (semop(semid, &sem_op, 1) == 0) {
+        // Non sappiamo quale servizio avrebbe scelto, quindi incrementiamo un servizio casuale
+        int random_service = rand() % SERVICE_COUNT;
+        shm_ptr->daily_users_not_arrived[random_service]++;
+        shm_ptr->total_users_not_arrived++;
+        shm_ptr->total_users_not_arrived_per_service[random_service]++;
         
         // Rilascia il mutex
         sem_op.sem_op = 1; // Unlock
@@ -340,12 +360,12 @@ int main(int argc, char *argv[])
 
     int personal_arrival_probability = calculate_personal_probability();
 
-    // Impostazione handler segnali (sennò esegue kill)
+    // Impostazione gestori di segnale (altrimenti esegue kill)
     signal(SIGUSR1, SIG_IGN);
     signal(SIGUSR2, SIG_IGN);
     signal(SIGTERM, end_simulation_handler);
 
-    // Connetti alla memoria condivisa
+    // Connessione alla memoria condivisa
     int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
     if (shmid == -1)
     {
@@ -361,7 +381,7 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    // Semaforo
+    // Accesso ai semafori
     semid = semget(SEM_KEY, NUM_SEMS, 0666);
     if (semid == -1)
     {
@@ -428,7 +448,7 @@ int main(int argc, char *argv[])
                 double elapsed_seconds = (current_time.tv_sec - day_start.tv_sec) +
                                          (current_time.tv_usec - day_start.tv_usec) / 1000000.0;
 
-                // Guarda se è ora di arrivare
+                // Verifica se è ora di arrivare
                 if (elapsed_seconds >= arrival_seconds)
                 {
                     if (!is_service_available(shm_ptr, service_id))
@@ -472,7 +492,7 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // Attendi un po' prima di controllare di nuovo
+                // Attende un po' prima di controllare di nuovo
                 usleep(5000); 
             }
 
@@ -485,18 +505,22 @@ int main(int argc, char *argv[])
         }
         else
         {
-            // DEBUG: stampa info non arrivo
+            // L'utente ha deciso di non presentarsi all'ufficio postale
+            // DEBUG: stampa informazioni di non arrivo
             //printf("\t[UTENTE %d] Oggi non vado all'ufficio postale.\n", user_id);
+            
+            // Incrementa il contatore degli utenti che non si sono presentati
+            increment_users_not_arrived_stats();
         }
         
-        // Segnale inizio giornata mai ricevuto
+        // Segnale di inizio giornata mai ricevuto
         if (!day_started && simulation_active) {
             printf("[UTENTE %d] La giornata non è mai iniziata per me. Conteggiato come non servito.\n", user_id);
             
             increment_users_home_stats(service_id);
         }
 
-        // Attendi il segnale di fine giornata (SIGUSR2) dal direttore
+        // Attende il segnale di fine giornata (SIGUSR2) dal direttore
         if (shm_ptr->day_in_progress && simulation_active) {
             
             sigset_t day_end_set;
@@ -520,7 +544,7 @@ int main(int argc, char *argv[])
                     break;
                 }
                 else if (sig == SIGTERM) {
-                    // Gestisci la terminazione
+                    // Gestisce la terminazione
                     simulation_active = 0;
                     break;
                 }

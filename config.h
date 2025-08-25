@@ -5,37 +5,35 @@
 #include <sys/types.h>
 #include <time.h> // Added for time_t
 
-// System limits for shared memory
+// Limiti di sistema per la memoria condivisa
 #define MAX_USERS 100000        
-#define MAX_QUEUE_SIZE 10000    // Max users in queue at once
-#define SHM_SIZE sizeof(SharedMemory) // Ensure SHM_SIZE uses the correct struct
+#define MAX_QUEUE_SIZE 10000    // Massimo utenti in coda contemporaneamente
+#define SHM_SIZE sizeof(SharedMemory) // Assicura che SHM_SIZE usi la struttura corretta
 
-// Time management
+// Gestione del tempo
 #define WORK_DAY_HOURS 8
-#define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minutes
+#define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minuti
 #define DAY_SIMULATION_TIME 5   
-#define SIM_DURATION 5          // Total number of days to simulate
-#define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Total seconds before timeout
-#define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanoseconds per simulated minute
-#define BREAK_PROBABILITY 2 //Probability of taking a break (%)
+#define SIM_DURATION 5          // Numero totale di giorni da simulare
+#define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Secondi totali prima del timeout
+#define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanosecondi per minuto simulato
+#define BREAK_PROBABILITY 0 // Probabilità di fare una pausa (%)
 
-// Simulation parameters
-#define NOF_WORKERS 10         // Number of operator processes
-#define NOF_USERS 100         // Reduced to a more manageable number for system resources
+// Parametri di simulazione
+#define NOF_WORKERS 10         // Numero di processi operatore
+#define NOF_USERS 100         // Ridotto a un numero più gestibile per le risorse di sistema
 #define NOF_WORKER_SEATS 10
 #define NOF_PAUSE 5
 #define P_SERV_MIN 50            // da 0 a 100!!! Non è decimale
 #define P_SERV_MAX 100       
 #define EXPLODE_THRESHOLD 1000
 
-// Working hours (in minutes from start of day)
-#define OFFICE_OPEN_TIME 0      // Office opens at start of day
-#define OFFICE_CLOSE_TIME 480   // Office closes after 8 hours
+// Orari di lavoro (in minuti dall'inizio del giorno)
+#define OFFICE_OPEN_TIME 0      // L'ufficio apre all'inizio del giorno
+#define OFFICE_CLOSE_TIME 480   // L'ufficio chiude dopo 8 ore
 
-// Semaphore configuration
+// Configurazione semafori
 #define SEM_KEY 0x1234
-
-// Modifica la definizione degli indici dei semafori
 
 // Definizione degli indici dei semafori
 #define SEM_MUTEX 0         // Mutex per accesso generale
@@ -80,14 +78,14 @@ static const char SERVICE_PREFIXES[] = {
     'O'   // Orologi
 };
 
-// Service types
+// Tipi di servizio
 typedef enum {
-    PACKAGES,           // 10 mins
-    LETTERS,           // 8 mins
-    BANCOPOST,         // 6 mins
-    BILLS,             // 8 mins
-    FINANCIAL,         // 20 mins
-    WATCHES,           // 20 mins
+    PACKAGES,           // 10 minuti
+    LETTERS,           // 8 minuti
+    BANCOPOST,         // 6 minuti
+    BILLS,             // 8 minuti
+    FINANCIAL,         // 20 minuti
+    WATCHES,           // 20 minuti
     SERVICE_COUNT
 } ServiceType;
 
@@ -130,7 +128,7 @@ typedef struct {
     pid_t user_pid;         // PID del processo utente richiedente
 } TicketRequestMsg;
 
-// Array of service names 
+// Array dei nomi dei servizi 
 const char* SERVICE_NAMES[] = {
     "Pacchi",
     "Lettere",
@@ -140,7 +138,7 @@ const char* SERVICE_NAMES[] = {
     "Orologi"
 };
 
-// Convert minutes to nanoseconds for simulation time
+// Converti minuti in nanosecondi per il tempo di simulazione
 static const long SERVICE_TIMES[] = {
     104200000,  // Pacchi (10 min = 104.2 ms)
     83360000,   // Lettere (8 min = 83.36 ms)
@@ -150,7 +148,7 @@ static const long SERVICE_TIMES[] = {
     208400000   // Orologi (20 min = 208.4 ms)
 };
 
-// Forward declare structs if needed due to order
+// Dichiarazioni anticipate delle strutture se necessario per l'ordine
 struct Operator;
 struct Counter;
 struct UserData;
@@ -181,92 +179,55 @@ typedef struct TicketRequest {
     long wait_time_ns;          // Tempo di attesa in nanosecondi (calcolato quando il servizio finisce)
 } TicketRequest;
 
-// Shared Memory Structures
+// Strutture per la memoria condivisa
 
-typedef struct UserData { // Added struct tag name
-    ServiceType service_requested;
-    int ticket_number;
-    char service_letter;     // Lettera che identifica il servizio
-    int served;             // Flag showing if user was served
-    int counter_id;         // Which counter is serving this user
-    int simulation_day;     // Which day this ticket was issued on
-    pid_t pid;              // PID of this specific user process (if needed)
-} UserData;
-
-typedef struct Counter { // Added struct tag name
-    pid_t operator_pid; // Maybe rename this if Operator struct holds the PID
+typedef struct Counter { // Aggiunto nome tag struttura
+    pid_t operator_pid; // PID dell'operatore assegnato a questo sportello
     int active;
     ServiceType current_service;
     int total_served;
 } Counter;
 
-typedef struct Operator { // Added struct tag name
-    pid_t pid;                     // Process ID of operator
-    int active;                    // Is operator active
-    ServiceType current_service;   // Current service being provided
-    int total_served;             // Total number of users served
-    int total_pauses;             // Number of breaks taken
+typedef struct Operator { // Aggiunto nome tag struttura
+    pid_t pid;                     // ID processo dell'operatore
+    int active;                    // L'operatore è attivo
+    ServiceType current_service;   // Servizio attualmente fornito
+    int total_served;             // Numero totale di utenti serviti
+    int total_pauses;             // Numero di pause fatte
     OperatorStatus status;        // Stato corrente dell'operatore
 } Operator;
 
-typedef struct LogMessage { // Added struct tag name
+typedef struct LogMessage { // Aggiunto nome tag struttura
     MessageType type;
-    int user_id; // Or pid_t user_pid;
+    int user_id; // O pid_t user_pid;
     pid_t process_pid;
     ServiceType service;
     int ticket_number;
     int simulation_day;
 } LogMessage;
 
-// This is the main structure for the shared memory segment
+// Questa è la struttura principale per il segmento di memoria condivisa
 typedef struct {
-    // Process IDs - MOVED HERE
+    // ID dei processi
     pid_t ticket_pid;
-    pid_t user_pids[NOF_USERS];     // Array to store all user PIDs
-    pid_t operator_pids[NOF_WORKERS]; // Array to store all operator PIDs
+    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti
+    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori
 
-    // Service availability
+    // Disponibilità servizi
     int service_available[SERVICE_COUNT];
 
-    // Counters and operators
+    // Sportelli e operatori
     Counter counters[NOF_WORKER_SEATS];
-    Operator operators[NOF_WORKERS]; // Array to store detailed operator info
+    Operator operators[NOF_WORKERS]; // Array per memorizzare informazioni dettagliate degli operatori
 
-    // Queue management
-    UserData users[MAX_QUEUE_SIZE]; // Array for user data/queue entries
-    int queue_head; // Example: Indices for queue management
-    int queue_tail; // Example: Indices for queue management
-    int queue_count; // Example: Number of users currently in queue
-
-    // Ticket management
-    int current_tickets[SERVICE_COUNT];
-
-    // Statistics
-    int daily_services[SERVICE_COUNT];
-    long avg_service_times[SERVICE_COUNT];
-    long min_service_times[SERVICE_COUNT];
-    long max_service_times[SERVICE_COUNT];
-    int total_services[SERVICE_COUNT];
-    int daily_unserved[SERVICE_COUNT];
-
-    // Message system
-    LogMessage log_messages[MAX_QUEUE_SIZE]; // Consider a smaller size?
-    int message_count;
-    int message_index; // Or use head/tail for circular buffer
-
-    // Simulation control
-    int simulation_day;    // Current day in the simulation
-    int day_in_progress;   // Flag to indicate if a day is currently in progress
-    int termination_flag; // Signal for processes to exit
+    // Controllo simulazione
+    int simulation_day;    // Giorno corrente nella simulazione
+    int day_in_progress;   // Flag per indicare se un giorno è attualmente in corso
+    int termination_flag; // Segnale per i processi di uscire
     int reset_complete;
 
-    // Request handling (if needed by director)
-    int pending_request;
-    ServiceType requested_service;
-
-    // Ticket request management
+    // Gestione richieste ticket
     int next_request_index;                 // Indice per la prossima richiesta di ticket
-    int next_ticket_number;                 // Numero progressivo per il prossimo ticket
     TicketRequest ticket_requests[MAX_REQUESTS];  // Coda delle richieste di ticket
 
     // Code separate per ogni servizio
@@ -280,10 +241,13 @@ typedef struct {
     int daily_users_home[SERVICE_COUNT];    // Utenti tornati a casa per ogni servizio
     int daily_users_timeout[SERVICE_COUNT];  // Utenti non serviti per mancanza di tempo
     int daily_users_no_ticket[SERVICE_COUNT]; // Utenti che non hanno ricevuto il ticket entro la giornata
+    int daily_users_not_arrived[SERVICE_COUNT]; // Utenti che non si sono presentati all'ufficio postale
     int total_tickets_served;               // Totale ticket serviti
     int total_users_home;                   // Totale utenti tornati a casa
     int total_users_timeout;                // Totale utenti non serviti per mancanza di tempo
     int total_users_no_ticket;              // Totale utenti che non hanno ricevuto il ticket
+    int total_users_not_arrived;            // Totale utenti che non si sono presentati all'ufficio postale
+    int total_users_not_arrived_per_service[SERVICE_COUNT]; // Totale utenti che non si sono presentati per servizio
     
     // Statistiche sui tempi di attesa
     long min_wait_time[SERVICE_COUNT];     // Tempo minimo di attesa per servizio (in nanosecondi)
@@ -339,12 +303,9 @@ typedef struct {
     // Somma totale degli operatori attivi per servizio durante tutta la simulazione
     int operators_active_per_service_total[SERVICE_COUNT];
 
-    // Somma totale delle pause di tutti gli operatori
-    int total_pauses_global;
-
 } SharedMemory;
 
-// IPC Keys
+// Chiavi IPC
 #define SHM_KEY 0x1234
 
 #endif
