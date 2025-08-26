@@ -19,6 +19,7 @@ int user_id;
 SharedMemory *shm_ptr = NULL;
 volatile int day_started = 0;
 volatile int simulation_active = 1;
+volatile int arrival_time_reached = 0;
 int semid = -1;
 
 // Variabile globale per la coda di messaggi
@@ -37,6 +38,12 @@ void end_simulation_handler(int signum __attribute__((unused)))
     simulation_active = 0;
     cleanup_resources();
     exit(EXIT_SUCCESS);
+}
+
+// Gestore per il segnale di arrivo
+void arrival_time_handler(int signum __attribute__((unused)))
+{
+    arrival_time_reached = 1;
 }
 
 // Determina se l'utente arriva (e se arriva il servizio scelto)
@@ -73,10 +80,46 @@ int determine_arrival_time()
     return 1 + (rand() % (OFFICE_CLOSE_TIME - 1));
 }
 
-// Converti minuti simulati in secondi reali di simulazione
-double minutes_to_simulation_seconds(int minutes)
+// Converti minuti simulati in nanosecondi per timer preciso
+long minutes_to_simulation_nanoseconds(int minutes)
 {
-    return ((double)minutes / WORK_DAY_MINUTES) * DAY_SIMULATION_TIME;
+    double seconds = ((double)minutes / WORK_DAY_MINUTES) * DAY_SIMULATION_TIME;
+    return (long)(seconds * 1000000000L); // Converti in nanosecondi
+}
+
+// Programma un timer per l'arrivo dell'utente
+int schedule_arrival_timer(int arrival_minute)
+{
+    long arrival_ns = minutes_to_simulation_nanoseconds(arrival_minute);
+    
+    // Crea un timer POSIX
+    timer_t timer_id;
+    struct sigevent sev;
+    struct itimerspec its;
+    
+    // Configura il segnale per il timer
+    sev.sigev_notify = SIGEV_SIGNAL;
+    sev.sigev_signo = SIGALRM;
+    sev.sigev_value.sival_ptr = &timer_id;
+    
+    if (timer_create(CLOCK_MONOTONIC, &sev, &timer_id) == -1) {
+        perror("timer_create failed");
+        return -1;
+    }
+    
+    // Configura il tempo di scadenza
+    its.it_value.tv_sec = arrival_ns / 1000000000L;
+    its.it_value.tv_nsec = arrival_ns % 1000000000L;
+    its.it_interval.tv_sec = 0;  // Timer singolo (non ripetuto)
+    its.it_interval.tv_nsec = 0;
+    
+    if (timer_settime(timer_id, 0, &its, NULL) == -1) {
+        perror("timer_settime failed");
+        timer_delete(timer_id);
+        return -1;
+    }
+    
+    return 0;
 }
 
 // Funzione per richiedere un ticket dal processo di gestione ticket
@@ -370,6 +413,7 @@ int main(int argc, char *argv[])
     signal(SIGUSR1, SIG_IGN);
     signal(SIGUSR2, SIG_IGN);
     signal(SIGTERM, end_simulation_handler);
+    signal(SIGALRM, arrival_time_handler); // Handler per il timer di arrivo
 
     // Connessione alla memoria condivisa
     int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0666);
@@ -425,86 +469,85 @@ int main(int argc, char *argv[])
         
         day_started = 1;
         
-        // Inizia il timer per la giornata
-        struct timeval day_start;
-        gettimeofday(&day_start, NULL);
-        
         int service_id = determine_arrival_and_service(personal_arrival_probability);
 
         // Se service_id è >= 0, l'utente ha deciso di visitare l'ufficio postale
         if (service_id >= 0)
         {
             int arrival_minute = determine_arrival_time();
-            double arrival_seconds = minutes_to_simulation_seconds(arrival_minute);
-
+            
             // DEBUG: stampa info arrivo
-            //printf("\t\t\t\t\t\t\t\t[UTENTE %d] Scheduled to arrive at minute %d on day %d for service: %s\n",       user_id, arrival_minute, shm_ptr->simulation_day, SERVICE_NAMES[service_id]);
+            //printf("\t\t\t\t\t\t\t\t[UTENTE %d] Scheduled to arrive at minute %d on day %d for service: %s\n", user_id, arrival_minute, shm_ptr->simulation_day, SERVICE_NAMES[service_id]);
 
-            int visited = 0;
-
-            // ------------------------------------------------------------------------------
-            // Loop GIORNATA (non simulazione)
-            // ------------------------------------------------------------------------------
-
-            while (shm_ptr->day_in_progress && simulation_active && !visited)
-            {
-                // Controlla tempo trascorso
-                struct timeval current_time;
-                gettimeofday(&current_time, NULL);
-                double elapsed_seconds = (current_time.tv_sec - day_start.tv_sec) +
-                                         (current_time.tv_usec - day_start.tv_usec) / 1000000.0;
-
-                // Verifica se è ora di arrivare
-                if (elapsed_seconds >= arrival_seconds)
-                {
-                    if (!is_service_available(shm_ptr, service_id))
-                    {
-                        // Utente tornato a casa
+            // Programma il timer per l'arrivo
+            arrival_time_reached = 0;
+            if (schedule_arrival_timer(arrival_minute) == 0) {
+                
+                // Aspetta il segnale di arrivo o la fine della giornata
+                sigset_t wait_set;
+                sigemptyset(&wait_set);
+                sigaddset(&wait_set, SIGALRM);  // Timer di arrivo
+                sigaddset(&wait_set, SIGUSR2);  // Fine giornata
+                sigaddset(&wait_set, SIGTERM);  // Terminazione
+                
+                // Blocca i segnali per sigtimedwait
+                sigprocmask(SIG_BLOCK, &wait_set, NULL);
+                
+                int visited = 0;
+                while (shm_ptr->day_in_progress && simulation_active && !visited) {
+                    struct timespec timeout = {.tv_sec = 0, .tv_nsec = 100000000}; // 100ms
+                    int sig = sigtimedwait(&wait_set, NULL, &timeout);
+                    
+                    if (sig == SIGALRM || arrival_time_reached) {
+                        // È ora di arrivare all'ufficio
+                        //printf("\t\t\t\t\t\t\t\t[UTENTE %d] Arrivato al minuto %d per il servizio %s\n", 
+                        //       user_id, arrival_minute, SERVICE_NAMES[service_id]);
+                        
+                        if (!is_service_available(shm_ptr, service_id)) {
+                            // Utente tornato a casa - servizio non disponibile
+                            increment_users_home_stats(service_id);
+                            visited = 1;
+                        } else {
+                            // Richiedi ticket
+                            int request_index = request_ticket(user_id, service_id);
+                            if (request_index >= 0) {
+                                int result = handle_post_office_visit(user_id, service_id, request_index);
+                                if (result < 0) {
+                                    // Errore nella gestione della visita
+                                    visited = 1;
+                                    if (!shm_ptr->day_in_progress) {
+                                        printf("[UTENTE %d] Non è stato possibile ricevere il biglietto per il servizio %s perché il giorno è terminato\n", user_id, SERVICE_NAMES[service_id]);
+                                    }
+                                } else {
+                                    // Successo
+                                    visited = 1;
+                                }
+                            } else {
+                                // Errore nella richiesta ticket
+                                visited = 1;
+                                increment_users_home_stats(service_id);
+                            }
+                        }
+                        break;
+                    } else if (sig == SIGUSR2 || !shm_ptr->day_in_progress) {
+                        // Giornata terminata prima dell'arrivo
+                        printf("\t[UTENTE %d] Non sono riuscito ad arrivare in tempo (arrivo previsto: minuto %d). Torno a casa.\n", 
+                               user_id, arrival_minute);
                         increment_users_home_stats(service_id);
                         visited = 1;
-                    }
-                    else
-                    {
-                        int request_index = request_ticket(user_id, service_id);
-
-                        if (request_index >= 0)
-                        {
-                            int result = handle_post_office_visit(user_id, service_id, request_index);
-                            
-                            if (result < 0)
-                            {
-                                // Ramo errore
-                                visited = 1;
-                                
-                                if (!shm_ptr->day_in_progress) {
-                                    printf("[UTENTE %d] Non è stato possibile ricevere il biglietto per il servizio %s perché il giorno è terminato\n", user_id, SERVICE_NAMES[service_id]);
-                                }
-                            }
-                            else
-                            {
-                                // Ramo successo
-                                visited = 1;
-                            }
-                        }
-                        else
-                        {
-                            visited = 1;
-                            // DEBUG: stampa errore richiesta ticket
-                            //printf("\t[UTENTE %d] Errore nella richiesta del ticket per %s. Torno a casa.\n", user_id, SERVICE_NAMES[service_id]);
-                            
-                            increment_users_home_stats(service_id);
-                        }
+                        break;
+                    } else if (sig == SIGTERM) {
+                        simulation_active = 0;
+                        break;
                     }
                 }
-
-                // Attende un po' prima di controllare di nuovo
-                usleep(5000); 
-            }
-
-            if (!visited && day_started) {
-                printf("\t[UTENTE %d] Non sono riuscito ad arrivare in tempo (arrivo previsto: minuto %d). Torno a casa.\n", 
-                       user_id, arrival_minute);
-
+                
+                // Ripristina la maschera dei segnali
+                sigprocmask(SIG_UNBLOCK, &wait_set, NULL);
+                
+            } else {
+                // Errore nella programmazione del timer
+                printf("[UTENTE %d] Errore nella programmazione del timer di arrivo. Torno a casa.\n", user_id);
                 increment_users_home_stats(service_id);
             }
         }
