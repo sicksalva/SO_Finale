@@ -211,6 +211,25 @@ int serve_customer(int assigned_counter)
                     sem_pause_stats.sem_op = 1; // Unlock
                     semop(semid, &sem_pause_stats, 1);
 
+                    // Riacquisisce il lock del servizio per rimettere il ticket
+                    struct sembuf sem_requeue;
+                    sem_requeue.sem_num = SEM_SERVICE_LOCK(random_service);
+                    sem_requeue.sem_op = -1;
+                    sem_requeue.sem_flg = 0;
+                    if (safe_semop(semid, &sem_requeue, 1) == 0) {
+                        // Rimette il ticket in coda
+                        int tail = shm_ptr->service_queue_tail[random_service];
+                        shm_ptr->service_queues[random_service][tail] = ticket_idx;
+                        shm_ptr->service_queue_tail[random_service] = (tail + 1) % MAX_SERVICE_QUEUE;
+                        shm_ptr->service_tickets_waiting[random_service]++;
+                        
+                        // Rilascia il lock del servizio
+                        sem_requeue.sem_op = 1;
+                        if (safe_semop(semid, &sem_requeue, 1) < 0) {
+                            perror("[OPERATORE] Errore nel rilascio del lock dopo aver rimesso il ticket in pausa");
+                        }
+                    }
+
                     // Pausa avviata (DEBUG)
                     shm_ptr->operators[operator_id].status = OPERATOR_ON_BREAK;
                     // Libera lo sportello

@@ -23,15 +23,81 @@
 
 ---
 
-## 1. Un Giorno All'Ufficio Postale: Come Funziona la Simulazione
+## 1. Visione Generale
 
-### 1.1 Il Risveglio del Sistema
+### 1.1 Compilazione e avvio:
+Abbiamo due opzioni per compilare e avviare: una è completamente automatica mentre l'altra richiede compilazione e avvio manuale (specificando quale configurazione .conf usare. 
+Compilazione e avvio automatico: in un terminale nella cartella con tutti i file presenti scriviamo il comando make run-timeout oppure make run-explode. I due comandi compileranno il file di configurazione specificato ed eseguiranno il processo direttore con dei dati specifici. L'esecuzione di make run eseguirà il default (ovvero terminazione per timeout).
+Compilazione manuale: eseguiamo semplicemente make all. Successivamente, eseguiamo ./direttore seguito da explode o timeout.
+
+### 1.2 Inizializzazione del Sistema: L'Avvio dell'Ecosistema
+
+#### 1.2.1 Bootstrap del Sistema
+
+Quando viene eseguito il comando `./direttore`, si avvia una sequenza orchestrata di inizializzazione che trasforma il sistema da un insieme di file separati in un ecosistema digitale funzionante. Il **processo direttore** funge da coordinatore centrale, responsabile di:
+
+- **Creazione delle risorse IPC** (memoria condivisa, semafori, code di messaggi)
+- **Avvio di tutti i processi** in un ordine specifico per evitare race conditions
+- **Sincronizzazione globale** per garantire che tutti i componenti siano pronti prima dell'inizio
+
+#### 1.2.2 Infrastruttura di Comunicazione
+
+Il sistema stabilisce un'infrastruttura di comunicazione robusta basata su tre pilastri fondamentali:
+
+**Memoria Condivisa:** Il "cervello" del sistema che contiene tutte le informazioni condivise tra processi:
+- Stato degli sportelli e informazioni degli operatori
+- Code dei ticket per ogni servizio 
+- Statistiche in tempo reale
+- Flag di controllo per coordinare le fasi della simulazione
+
+**Sistema di Semafori:** Un'architettura multi-livello con 14 semafori specializzati per gestire l'accesso concorrente alle risorse critiche, dalla sincronizzazione generale a quella specifica per ogni tipo di servizio.
+
+**Code di Messaggi:** Canale di comunicazione asincrona per le richieste di ticket tra utenti e sistema centrale.
+
+#### 1.2.3 Sequenza di Avvio Controllata
+
+Il sistema segue una sequenza di avvio ben definita per garantire stabilità e coerenza, sia di "stampa" che di organizzazione dei processi:
+
+1. **Inizializzazione delle risorse IPC** e azzeramento delle strutture dati
+2. **Creazione del processo ticket** (deve essere pronto a ricevere richieste)
+3. **Avvio degli operatori** (devono registrarsi e cercare sportelli)
+4. **Creazione degli utenti** (possono iniziare a fare richieste)
+5. **Semaforo verde per tutti i processi creati**
+
+Ogni fase include pause strategiche per assicurare che l'inizializzazione sia completa prima di procedere al passo successivo.
+
+#### 1.2.4 Auto-Registrazione dei Processi
+
+Ogni processo creato si **auto-registra** nella memoria condivisa e stabilisce le proprie connessioni alle risorse IPC:
+
+- **Gli operatori** si assegnano un servizio casuale e si registrano come disponibili
+- **Il processo ticket** inizializza le code per ogni servizio 
+- **Gli utenti** si collegano per poter inviare richieste e ricevere notifiche
+
+#### 1.2.5 Meccanismo di Sincronizzazione Globale
+
+Prima che inizi effettivamente la simulazione, il sistema utilizza una **barriera di sincronizzazione** (il semaforo verde nel punto 5) per garantire che tutti i processi siano completamente inizializzati e pronti. Solo quando tutti i componenti (utenti, operatori, processo ticket) hanno segnalato la loro prontezza, il direttore avvia la prima giornata lavorativa.
+
+Con questo "semaforo" di avvio, creiamo **equità tra i processi**, evitando di far iniziare i processi inviando segnali singolarmente, che creerebbe del ritardo sull'ultimo utente avvisato (lavorando nell'ordine dei nanosecondi e millisecondi non possiamo permettercelo).
+
+Questa architettura garantisce che il sistema sia **deterministico** nell'inizializzazione ma **flessibile** nell'esecuzione, permettendo comportamenti emergenti realistici pur mantenendo la robustezza necessaria per una simulazione affidabile.
+
+### 1.3 Simulazione di una giornata
+
+Una volta completata l'inizializzazione del sistema, per ogni giornata il direttore segue una sequenza precisa:
+
+1. **Inizializzazione della giornata** (configurazione sportelli e reset contatori)
+2. **Invio segnale SIGUSR1** a tutti i processi: è l'equivalente digitale del "si apre l'ufficio!"
+3. **Attivazione flag day_in_progress** nella memoria condivisa
+4. **Rilascio della barriera semaforo** per sincronizzazione globale
+
+Questo momento rappresenta una **sincronizzazione globale** perfettamente orchestrata: tutti i processi ricevono prima la notifica di inizio giornata (SIGUSR1), poi attendono tutti insieme sulla barriera semaforo prima di iniziare effettivamente a lavorare. Questo garantisce **equità temporale** - nessun processo inizia prima degli altri, eliminando vantaggi dovuti al timing di invio dei segnali.
 
 Quando avviamo `./direttore`, assistiamo alla nascita di un ecosistema digitale che ricrea fedelmente la complessità di un ufficio postale moderno. Il **processo direttore** agisce come il manager dell'ufficio: coordina tutto, dall'apertura mattutina alla chiusura serale, raccogliendo statistiche e garantendo che ogni ingranaggio funzioni perfettamente.
 
 Il primo atto è la **creazione delle risorse**: la memoria condivisa diventa il "cervello" del sistema, contenendo tutte le informazioni condivise tra i processi. I semafori fungono da "semafori digitali" per coordinare l'accesso alle risorse critiche, mentre le code di messaggi permettono la comunicazione asincrona tra utenti e sistema di ticket.
 
-### 1.2 L'Apertura dell'Ufficio: Un Balletto Sincronizzato
+### 1.3.2 L'Apertura dell'Ufficio: Un Balletto Sincronizzato
 
 ```
 🏢 Ore 8:00 - APERTURA UFFICIO POSTALE
@@ -43,108 +109,105 @@ Il direttore **invia il segnale SIGUSR1** a tutti i processi: è l'equivalente d
 - **Il processo ticket** si attiva e inizia ad ascoltare le richieste in arrivo
 - **Gli utenti** iniziano a pianificare le loro visite, alcuni decidendo di andare subito, altri di aspettare
 
-### 1.3 La Vita degli Operatori: Competizione e Servizio
+## 2. Analisi dei Processi: Esecuzione e Comportamenti
 
-Immaginiamo l'**Operatore #5**, specializzato in "Bancoposta". Al segnale di apertura, deve **competere** con gli altri operatori per conquistare uno sportello. Il sistema implementa una vera **race condition controllata**: chi arriva prima (in termini di scheduling del SO) si aggiudica lo sportello.
+### 2.0 Esecuzione del codice di Direttore
 
-Una volta assegnato allo **Sportello #3**, l'operatore entra in un ciclo intelligente:
+Il **processo direttore** funge da orchestratore centrale dell'intera simulazione, gestendo il ciclo di vita del sistema e coordinando tutti gli altri processi attraverso una sequenza di operazioni precise e temporizzate.
 
-```c
-while (day_in_progress && running) {
-    // 1. Cerca ticket da servire nella coda Bancoposta
-    // 2. Se trova un cliente, lo serve per 4-9 minuti simulati
-    // 3. Se non trova nessuno, usa sigsuspend() per attendere
-    // 4. Occasionalmente decide di prendersi una pausa
-}
-```
+**Inizializzazione Sistema:**
+Il direttore inizia creando tutte le risorse IPC necessarie (memoria condivisa, semafori, code di messaggi) e successivamente genera i processi specializzati in ordine specifico: prima il processo ticket, poi gli operatori, infine gli utenti. Ogni creazione è seguita da una pausa di sincronizzazione per garantire che i processi si registrino correttamente nella memoria condivisa.
 
-Il bello è che **non c'è attesa attiva**: quando non ci sono clienti, l'operatore si "addormenta" fino a quando il processo ticket gli invia un `SIGUSR1` per dirgli "è arrivato un nuovo cliente!".
+**Gestione Giornaliera:**
+Per ogni giornata di simulazione, il direttore esegue una sequenza ritualizzata: configura casualmente i servizi degli sportelli, invia il segnale SIGUSR1 a tutti i processi per notificare l'apertura, attiva il flag `day_in_progress` e rilascia la barriera semaforo SEM_DAY_START per permettere l'inizio sincronizzato delle attività.
 
-### 1.4 Il Sistema Ticket: Il Cuore Pulsante
+**Monitoraggio Attivo:**
+Durante la giornata lavorativa, il direttore entra in un ciclo di attesa temporizzata utilizzando `alarm()` e `sigsuspend()`, controllando ogni secondo il progresso della simulazione e verificando le condizioni di "esplosione" (troppi utenti in coda). Quando la soglia viene superata, termina immediatamente la simulazione per proteggere il sistema.
 
-Il **processo ticket** è il vero gioiello dell'architettura. Funziona come un **dispatcher intelligente** che:
+**Terminazione Controllata:**
+Al termine di ogni giornata, il direttore raccoglie tutte le statistiche, conta i ticket non serviti, svuota le code, stampa i report dettagliati e invia SIGUSR2 per notificare la fine della giornata. Infine, resetta tutti i contatori per la giornata successiva e gestisce la pulizia finale delle risorse IPC.
 
-1. **Riceve richieste** via coda di messaggi (`msgrcv` bloccante)
-2. **Genera immediatamente** un ticket (es. "B15" per Bancoposta #15)
-3. **Inserisce** il ticket nella coda specifica del servizio
-4. **Notifica istantaneamente** tutti gli operatori del servizio con `SIGUSR1`
+### 2.1 Esecuzione del codice di Operatore
 
-La magia sta nella **comunicazione asincrona**: l'utente invia la richiesta e può immediatamente controllare lo stato nella memoria condivisa, mentre il ticket viene processato in parallelo.
+Ogni **processo operatore** rappresenta un impiegato specializzato che gestisce un servizio specifico e compete per l'accesso agli sportelli disponibili attraverso meccanismi di concorrenza controllata.
 
-### 1.5 L'Esperienza dell'Utente: Dall'Arrivo al Servizio
+**Avvio e Specializzazione:**
+All'avvio, ogni operatore riceve un ID univoco e seleziona casualmente il proprio servizio di specializzazione utilizzando `assign_random_service()`. Si registra nella memoria condivisa aggiornando i propri dati (PID, servizio, stato OPERATOR_WAITING) e configura i gestori per i segnali SIGUSR1 (inizio giornata), SIGUSR2 (fine giornata) e SIGTERM (terminazione).
 
-Seguiamo l'**Utente #23** in una giornata tipo:
+**Sincronizzazione Giornaliera:**
+All'inizio di ogni giornata, l'operatore attende prima il segnale SIGUSR1 dal direttore, poi si blocca sul semaforo SEM_DAY_START per la sincronizzazione globale. Una volta rilasciato, entra nella fase di competizione per uno sportello.
 
-**Mattina presto (7:30):**
-L'utente "dorme" in attesa del segnale di apertura ufficio.
+**Acquisizione Sportello:**
+L'operatore entra in un ciclo di ricerca sportelli protetto dal mutex SEM_COUNTERS, cercando uno sportello libero compatibile con il proprio servizio. Se non trova sportelli disponibili, si mette in stato OPERATOR_WAITING e usa `sigsuspend()` per attendere segnali di riassegnazione o fine giornata, evitando completamente l'attesa attiva.
 
-**Apertura (8:00):**
-Riceve `SIGUSR1`, decide di visitare l'ufficio (probabilità del 70%) e sceglie il servizio "Lettere".
+**Ciclo di Servizio:**
+Una volta assegnato a uno sportello, l'operatore entra nel ciclo principale dove chiama ripetutamente `serve_customer()`. Questa funzione acquisisce il lock specifico del servizio con SEM_SERVICE_LOCK, estrae un ticket dalla coda del servizio, simula il tempo di servizio con `nanosleep()` interrompibile, aggiorna le statistiche di attesa e servizio, e gestisce le pause probabilistiche.
 
-**Arrivo pianificato (10:30):**
-Il sistema simula il tempo di arrivo - non tutti arrivano subito! L'utente arriva al minuto 150 della giornata.
+**Gestione Pause:**
+Durante il servizio, l'operatore può decidere di prendersi una pausa (probabilità configurabile), cambiando il proprio stato in OPERATOR_ON_BREAK e liberando lo sportello per permettere la riassegnazione ad altri operatori tramite `try_assign_available_operators()`.
 
-**Richiesta ticket:**
-```c
-// Invia messaggio al processo ticket
-TicketRequestMsg msg = {
-    .mtype = MSG_TICKET_REQUEST,
-    .user_id = 23,
-    .service_id = LETTERS,
-    .user_pid = getpid()
-};
-msgsnd(msgid, &msg, sizeof(msg), 0);
-```
+### 2.2 Esecuzione del codice di Ticket
 
-**Attesa del ticket:**
-L'utente usa `sigtimedwait()` per attendere la risposta del sistema ticket. Non c'è polling - è **event-driven**.
+Il **processo ticket** costituisce il sistema nervoso centrale della simulazione, gestendo in tempo reale tutte le richieste di ticket e coordinando la comunicazione tra utenti e operatori.
 
-**Ricevimento ticket "L8":**
-Il processo ticket risponde con `SIGUSR1` e l'utente trova il suo ticket nella memoria condivisa.
+**Inizializzazione Infrastructure:**
+All'avvio, il processo ticket si connette alla memoria condivisa e ai semafori, crea o accede alla coda di messaggi con chiave MSG_QUEUE_KEY, si registra memorizzando il proprio PID e inizializza i contatori dei ticket per ogni servizio partendo da 1.
 
-**Attesa del servizio:**
-L'utente ora aspetta che un operatore lo chiami. Il sistema tracked tutto: tempo di richiesta, tempo di servizio, tempo di attesa.
+**Attesa Sincronizzazione:**
+Come tutti i processi, attende il segnale SIGUSR1 del direttore e poi si blocca sul semaforo SEM_DAY_START. Una volta sincronizzato, resetta tutti i contatori giornalieri e prepara le strutture dati per la nuova giornata.
 
-**Servizio completato:**
-Dopo 6-12 minuti simulati, l'operatore completa il servizio e l'utente esce soddisfatto.
+**Ciclo di Elaborazione:**
+Il cuore del processo è un loop che usa `msgrcv()` bloccante per ricevere messaggi di tipo MSG_TICKET_REQUEST. Questa chiamata sospende il processo fino all'arrivo di una richiesta, eliminando completamente l'attesa attiva. Ogni messaggio ricevuto viene elaborato immediatamente tramite `process_new_ticket_request()`.
 
-### 1.6 Momenti di Stress: Gestione delle Situazioni Critiche
+**Generazione Ticket:**
+Per ogni richiesta valida, il processo acquisisce il mutex SEM_QUEUE, ottiene il prossimo numero progressivo per il servizio richiesto, genera l'ID del ticket (es. "B15" per Bancoposta #15), inserisce il ticket nella coda specifica del servizio e aggiorna tutti i contatori. Crucialmente, notifica istantaneamente tutti gli operatori del servizio con SIGUSR1.
 
-**Scenario "Explode" - Troppi utenti contemporaneamente:**
-Con 200 utenti e soglia explode a 20, quando ci sono troppi ticket in attesa, il sistema **interrompe la creazione di nuovi utenti** per 30 secondi - una feature di auto-protezione intelligente.
+**Comunicazione Asincrona:**
+Dopo aver elaborato la richiesta, il processo invia SIGUSR1 all'utente richiedente per notificare che il ticket è pronto. Questa comunicazione bidirezionale permette elaborazione completamente asincrona: l'utente può continuare altre attività mentre il ticket viene processato in parallelo.
 
-**Scenario "Timeout" - Pressione temporale:**
-Con 150 utenti, 8 operatori e tempi ridotti, osserviamo come il sistema gestisce la pressione: gli utenti potrebbero non ricevere il ticket in tempo, alcuni operatori potrebbero andare in pausa, creando **code dinamiche** che si allungano e accorciano.
+**Gestione Fine Giornata:**
+Al ricevimento di SIGUSR2, il processo termina l'elaborazione di nuove richieste, completa quelle in corso e si prepara per la giornata successiva resettando tutte le strutture dati.
 
-**Fine giornata improvvisa:**
-Quando il direttore invia `SIGUSR2` (fine giornata), assistiamo a una **terminazione orchestrata**:
-- Gli operatori terminano il cliente attuale ma non ne prendono di nuovi
-- I ticket in coda vengono marcati come "non serviti"
-- Le statistiche vengono aggiornate atomicamente
+### 2.3 Esecuzione del codice di Utente
 
-### 1.7 La Bellezza della Concorrenza
+Ogni **processo utente** simula un cittadino che interagisce con l'ufficio postale seguendo pattern realistici di arrivo, richiesta servizi e attesa, con comportamenti probabilistici che rendono ogni esecuzione unica.
 
-Quello che rende magico questo sistema è vedere **processi indipendenti** che collaborano senza conoscersi direttamente:
+**Inizializzazione Personale:**
+All'avvio, ogni utente riceve un ID univoco, si connette alle risorse IPC (memoria condivisa, semafori, coda messaggi), configura i gestori di segnale e calcola la propria probabilità personale di visitare l'ufficio utilizzando una distribuzione statistica che varia tra 30% e 90%.
 
-- **Un utente** non sa quale operatore lo servirà
-- **Un operatore** non sa quali utenti arriveranno
-- **Il ticket system** non sa chi è disponibile, ma coordina tutto perfettamente
-- **Il direttore** osserva tutto senza interferire, come un manager ideale
+**Decisione Giornaliera:**
+All'inizio di ogni giornata, dopo aver ricevuto SIGUSR1 e superato la barriera semaforo, l'utente decide probabilisticamente se visitare l'ufficio. Se decide di non andare, incrementa semplicemente le statistiche degli utenti non presentati e attende la fine della giornata.
 
-Ogni esecuzione è **unica**: l'ordine di arrivo degli utenti, l'assegnazione degli sportelli, le pause degli operatori - tutto dipende dal timing del sistema operativo, creando scenari sempre diversi ma sempre coerenti.
+**Pianificazione Visita:**
+Se decide di visitare l'ufficio, l'utente seleziona casualmente il servizio desiderato e calcola un orario di arrivo aleatorio durante la giornata lavorativa. Questo simula realisticamente il fatto che gli utenti non arrivano tutti contemporaneamente all'apertura.
 
-### 1.8 Un Sistema Che Impara
+**Attesa Arrivo:**
+L'utente entra in un loop di attesa attiva minimale, controllando periodicamente se è il momento di arrivare confrontando il tempo trascorso con l'orario pianificato. Prima dell'arrivo, verifica la disponibilità del servizio controllando se esistono sportelli attivi e operatori compatibili.
 
-Il progetto **SO_Finale** non è solo una simulazione - è un **laboratorio vivente** per esplorare i concetti fondamentali dei sistemi operativi:
+**Richiesta Ticket:**
+All'arrivo, l'utente acquisisce un slot nella memoria condivisa tramite il mutex SEM_MUTEX, inizializza una TicketRequest con i propri dati e timestamp preciso, e invia un messaggio TicketRequestMsg al processo ticket tramite `msgsnd()`.
 
-- **Race conditions** controllate nell'assegnazione sportelli
-- **Sincronizzazione** complessa tra processi indipendenti  
+**Attesa Elaborazione:**
+Dopo aver inviato la richiesta, l'utente usa `sigtimedwait()` per attendere la risposta del processo ticket, con timeout periodici per controllare lo stato nella memoria condivisa. Questo meccanismo è completamente event-driven e non sperpera risorse CPU.
+
+**Gestione Servizio:**
+Una volta ottenuto il ticket, l'utente attende che un operatore lo chiami controllando periodicamente lo stato `being_served` nella propria TicketRequest. Quando viene servito, rimane in attesa della completion e poi esce dalla simulazione con successo.
+
+**Gestione Timeout:**
+Se la giornata termina prima che l'utente riceva il ticket o venga servito, viene automaticamente classificato nelle appropriate statistiche (no_ticket, timeout, o home) e termina la propria esecuzione.
+
+## 3. Conclusioni
+
+Il progetto **SO_Finale** rappresenta un **laboratorio vivente** per esplorare i concetti fondamentali dei sistemi operativi attraverso una simulazione realistica e complessa:
+
+- **Concorrenza** controllata nell'assegnazione sportelli tra operatori  
+- **Sincronizzazione** multiprocesso con semafori e segnali
 - **Gestione delle risorse** finite (sportelli, tempo, operatori)
-- **Comunicazione asincrona** scalabile ed efficiente
-- **Robustezza** contro guasti e sovraccarichi
+- **Comunicazione asincrona** tra processi indipendenti
+- **Robustezza** contro sovraccarichi e terminazioni impreviste
 
-Ogni riga di codice racconta una storia di **coordinazione perfetta** tra entità autonome, proprio come nella vita reale di un ufficio postale, ma con la precisione e determinismo che solo un sistema digitale può offrire.
+L'architettura dimostra come processi autonomi possano collaborare efficacemente attraverso meccanismi IPC, creando un sistema complesso ma deterministico che simula fedelmente le dinamiche di un ufficio postale reale.
 
 ---
 
-*Questa visione generale fornisce il framework concettuale per comprendere l'architettura e gli obiettivi del sistema. I capitoli successivi approfondiranno i dettagli implementativi e le scelte progettuali.*
+*Questa analisi fornisce il framework per comprendere l'esecuzione dei singoli processi e le loro interazioni nel sistema di simulazione dell'ufficio postale.*
