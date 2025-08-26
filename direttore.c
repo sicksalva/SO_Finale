@@ -991,8 +991,35 @@ void reset_daily_state(SharedMemory *shm, int semid) {
     }
 }
 
-int main()
+int main(int argc, char *argv[])
 {
+    // Determina quale configurazione utilizzare
+    const char* config_file = "timeout.conf"; // Default
+    
+    if (argc > 1) {
+        if (strcmp(argv[1], "explode") == 0) {
+            config_file = "explode.conf";
+        } else if (strcmp(argv[1], "timeout") == 0) {
+            config_file = "timeout.conf";
+        } else {
+            printf("Uso: %s [explode|timeout]\n", argv[0]);
+            printf("Default: timeout\n");
+        }
+    }
+    
+    // Carica la configurazione
+    if (!read_config(config_file)) {
+        printf("Errore nel caricamento della configurazione, uso valori di default\n");
+    }
+    
+    // Imposta la variabile d'ambiente per i processi figlio
+    setenv("SO_CONFIG_FILE", config_file, 1);
+    
+    printf("=== CONFIGURAZIONE ATTIVA ===\n");
+    printf("Operatori: %d, Utenti: %d, Sportelli: %d\n", NOF_WORKERS, NOF_USERS, NOF_WORKER_SEATS);
+    printf("Soglia esplosione: %d, Probabilità servizio: %d-%d%%\n", EXPLODE_THRESHOLD, P_SERV_MIN, P_SERV_MAX);
+    printf("=============================\n\n");
+    
     // Imposta i gestori dei segnali
     signal(SIGINT, cleanup_handler);   // Ctrl+C
     signal(SIGTERM, cleanup_handler);  // Terminazione forzata

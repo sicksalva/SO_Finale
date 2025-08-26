@@ -20,43 +20,48 @@ ticket: ticket.o
 utente: utente.o
 	$(CC) utente.o -o utente $(LDFLAGS)
 
-%.o: %.c config.h
+%.o: %.c config.h config_reader.h
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f $(PROGS) *.o config.h
+	rm -f $(PROGS) *.o
 
-# Target specifici per ogni configurazione
-timeout:  
-	@echo "=== Compilazione con configurazione TIMEOUT ==="
-	@cp config_timeout.h config.h
-	$(MAKE) all
+# Esegui con configurazione specifica
+run-explode: all
+	@echo "=== Esecuzione con configurazione EXPLODE ==="
+	./direttore explode
 
-explode:
-	@echo "=== Compilazione con configurazione EXPLODE ==="
-	@cp config_explode.h config.h
-	$(MAKE) all
+run-timeout: all
+	@echo "=== Esecuzione con configurazione TIMEOUT ==="
+	./direttore timeout
 
-run: 
-	@if [ ! -f config.h ]; then \
-		echo "Errore: Nessuna configurazione attiva. Usa 'make timeout' o 'make explode' prima di eseguire."; \
-		exit 1; \
-	fi
+run: all
+	@echo "=== Esecuzione con configurazione DEFAULT (timeout) ==="
 	./direttore
 
 # Target per testare tutte le configurazioni
-test-all: test-timeout test-explode
-
-test-timeout:
-	@echo "=== Test configurazione TIMEOUT ==="
-	$(MAKE) clean  
-	$(MAKE) timeout
-	@echo "Configurazione TIMEOUT compilata con successo!"
+test-all: all test-explode test-timeout
 
 test-explode:
 	@echo "=== Test configurazione EXPLODE ==="
-	$(MAKE) clean
-	$(MAKE) explode  
-	@echo "Configurazione EXPLODE compilata con successo!"
+	@if [ -f explode.conf ]; then \
+		echo "Configurazione EXPLODE trovata!"; \
+		echo "Preview configurazione:"; \
+		head -20 explode.conf; \
+	else \
+		echo "ERRORE: explode.conf non trovato!"; \
+		exit 1; \
+	fi
 
-.PHONY: all clean timeout explode test-all test-timeout test-explode
+test-timeout:
+	@echo "=== Test configurazione TIMEOUT ==="
+	@if [ -f timeout.conf ]; then \
+		echo "Configurazione TIMEOUT trovata!"; \
+		echo "Preview configurazione:"; \
+		head -20 timeout.conf; \
+	else \
+		echo "ERRORE: timeout.conf non trovato!"; \
+		exit 1; \
+	fi
+
+.PHONY: all clean run-explode run-timeout test-all test-explode test-timeout

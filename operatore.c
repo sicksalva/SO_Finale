@@ -482,6 +482,11 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    // Carica la configurazione dalla variabile d'ambiente
+    const char* config_file = getenv("SO_CONFIG_FILE");
+    if (!config_file) config_file = "timeout.conf"; // default
+    read_config(config_file);
+
     // Identifica l'operatore
     operator_id = atoi(argv[1]);
 

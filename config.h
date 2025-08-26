@@ -3,28 +3,31 @@
 
 #include <limits.h>
 #include <sys/types.h>
-#include <time.h> // Added for time_t
+#include <time.h>
+#include "config_reader.h"
 
 // Limiti di sistema per la memoria condivisa
-#define SHM_SIZE sizeof(SharedMemory) // Assicura che SHM_SIZE usi la struttura corretta
+#define SHM_SIZE sizeof(SharedMemory)
 
-#define WORK_DAY_HOURS 8
-#define WORK_DAY_MINUTES (WORK_DAY_HOURS * 60)  // 480 minuti
-#define DAY_SIMULATION_TIME 5       
-#define SIM_DURATION 5          
-#define TOTAL_SIMULATION_TIME (SIM_DURATION * DAY_SIMULATION_TIME)  // Secondi totali prima del timeout
-#define N_NANO_SECS ((DAY_SIMULATION_TIME * 1000000000L) / WORK_DAY_MINUTES)  // Nanosecondi per minuto simulato
-#define BREAK_PROBABILITY 0 
+// Macro per accedere ai valori di configurazione
+#define WORK_DAY_HOURS config.WORK_DAY_HOURS
+#define WORK_DAY_MINUTES config.WORK_DAY_MINUTES
+#define DAY_SIMULATION_TIME config.DAY_SIMULATION_TIME
+#define SIM_DURATION config.SIM_DURATION
+#define TOTAL_SIMULATION_TIME config.TOTAL_SIMULATION_TIME
+#define N_NANO_SECS config.N_NANO_SECS
+#define BREAK_PROBABILITY config.BREAK_PROBABILITY
 
-#define NOF_WORKERS 10         
-#define NOF_USERS 200         
-#define NOF_WORKER_SEATS 10
-#define NOF_PAUSE 5
-#define P_SERV_MIN 90         
-#define P_SERV_MAX 100       
-#define EXPLODE_THRESHOLD 40 
-#define OFFICE_OPEN_TIME 0      // L'ufficio apre all'inizio del giorno
-#define OFFICE_CLOSE_TIME 480   // L'ufficio chiude dopo 8 ore
+#define NOF_WORKERS config.NOF_WORKERS
+#define NOF_USERS config.NOF_USERS
+#define NOF_WORKER_SEATS config.NOF_WORKER_SEATS
+#define NOF_PAUSE config.NOF_PAUSE
+#define P_SERV_MIN config.P_SERV_MIN
+#define P_SERV_MAX config.P_SERV_MAX
+#define EXPLODE_THRESHOLD config.EXPLODE_THRESHOLD
+
+#define OFFICE_OPEN_TIME config.OFFICE_OPEN_TIME
+#define OFFICE_CLOSE_TIME config.OFFICE_CLOSE_TIME
 
 // Configurazione semafori
 #define SEM_KEY 0x1234
@@ -175,15 +178,15 @@ typedef struct Operator { // Aggiunto nome tag struttura
 typedef struct {
     // ID dei processi
     pid_t ticket_pid;
-    pid_t user_pids[NOF_USERS];     // Array per memorizzare tutti i PID degli utenti
-    pid_t operator_pids[NOF_WORKERS]; // Array per memorizzare tutti i PID degli operatori
+    pid_t user_pids[MAX_USERS];     // Array per memorizzare tutti i PID degli utenti
+    pid_t operator_pids[MAX_WORKERS]; // Array per memorizzare tutti i PID degli operatori
 
     // Disponibilità servizi
     int service_available[SERVICE_COUNT];
 
     // Sportelli e operatori
-    Counter counters[NOF_WORKER_SEATS];
-    Operator operators[NOF_WORKERS]; // Array per memorizzare informazioni dettagliate degli operatori
+    Counter counters[MAX_WORKER_SEATS];
+    Operator operators[MAX_WORKERS]; // Array per memorizzare informazioni dettagliate degli operatori
 
     // Controllo simulazione
     int simulation_day;    // Giorno corrente nella simulazione
@@ -243,27 +246,27 @@ typedef struct {
     int total_pauses_simulation;           // Totale pause in tutta la simulazione
     
     // Array per memorizzare le statistiche di ogni giorno (per calcolare le medie)
-    int users_served_per_day[SIM_DURATION];
-    int services_not_provided_per_day[SIM_DURATION]; 
-    long total_wait_time_per_day[SIM_DURATION];      // Tempo totale di attesa per giorno (in nanosecondi)
-    int wait_count_per_day[SIM_DURATION];
-    long total_service_time_per_day[SIM_DURATION];
-    int service_count_per_day[SIM_DURATION];
-    int pauses_per_day[SIM_DURATION];
-    int operators_active_per_day[SIM_DURATION];
+    int users_served_per_day[MAX_SIM_DURATION];
+    int services_not_provided_per_day[MAX_SIM_DURATION]; 
+    long total_wait_time_per_day[MAX_SIM_DURATION];      // Tempo totale di attesa per giorno (in nanosecondi)
+    int wait_count_per_day[MAX_SIM_DURATION];
+    long total_service_time_per_day[MAX_SIM_DURATION];
+    int service_count_per_day[MAX_SIM_DURATION];
+    int pauses_per_day[MAX_SIM_DURATION];
+    int operators_active_per_day[MAX_SIM_DURATION];
     
     // Statistiche per servizio per giorno (per le medie per tipo di servizio)
-    int users_served_per_service_per_day[SERVICE_COUNT][SIM_DURATION];
-    int services_not_provided_per_service_per_day[SERVICE_COUNT][SIM_DURATION];
-    long total_wait_time_per_service_per_day[SERVICE_COUNT][SIM_DURATION];  // Tempo di attesa per servizio per giorno (in nanosecondi)
-    int wait_count_per_service_per_day[SERVICE_COUNT][SIM_DURATION];
-    long total_service_time_per_service_per_day[SERVICE_COUNT][SIM_DURATION];
-    int service_count_per_service_per_day[SERVICE_COUNT][SIM_DURATION];
+    int users_served_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];
+    int services_not_provided_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];
+    long total_wait_time_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];  // Tempo di attesa per servizio per giorno (in nanosecondi)
+    int wait_count_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];
+    long total_service_time_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];
+    int service_count_per_service_per_day[SERVICE_COUNT][MAX_SIM_DURATION];
 
     // Medie cumulative progressive per ogni giorno
-    double cumulative_avg_users_served[SIM_DURATION];
-    double cumulative_avg_services_provided[SIM_DURATION];
-    double cumulative_avg_services_not_provided[SIM_DURATION];
+    double cumulative_avg_users_served[MAX_SIM_DURATION];
+    double cumulative_avg_services_provided[MAX_SIM_DURATION];
+    double cumulative_avg_services_not_provided[MAX_SIM_DURATION];
     
     // Somma totale degli operatori attivi per servizio durante tutta la simulazione
     int operators_active_per_service_total[SERVICE_COUNT];

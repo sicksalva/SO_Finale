@@ -196,6 +196,11 @@ void process_new_ticket_request(TicketRequestMsg *msg)
 
 int main()
 {
+    // Carica la configurazione dalla variabile d'ambiente
+    const char* config_file = getenv("SO_CONFIG_FILE");
+    if (!config_file) config_file = "timeout.conf"; // default
+    read_config(config_file);
+
     // Imposta i gestori di segnale
     signal(SIGTERM, termination_handler); // Segnale di terminazione
     signal(SIGINT, termination_handler);  // Ctrl+C
