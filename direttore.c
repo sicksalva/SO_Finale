@@ -57,11 +57,39 @@ void cleanup_handler(int signum __attribute__((unused))) {
             }
         }
 
-        // Attendi la terminazione di tutti i processi figli in modo robusto
+        // Attendi la terminazione di tutti i processi figli con timeout
         pid_t wpid;
         int status;
-        while ((wpid = wait(&status)) > 0 || (wpid == -1 && errno == EINTR)) {
-            // Il loop continua finché i figli terminano o wait è interrotto
+        int children_terminated = 0;
+        int timeout_count = 0;
+        const int MAX_TIMEOUT = 50; // Massimo 5 secondi di attesa
+        
+        usleep(100000); // 100ms
+        
+        while (timeout_count < MAX_TIMEOUT) {
+            wpid = waitpid(-1, &status, WNOHANG); // Non-blocking wait
+            
+            if (wpid > 0) {
+                children_terminated++;
+                timeout_count = 0; // Reset timeout se termina un processo
+            } else if (wpid == 0) {
+                // Nessun processo terminato, incrementa timeout
+                timeout_count++;
+                usleep(100000); // Aspetta 100ms prima di riprovare
+            } else {
+                // Errore o nessun processo figlio rimasto
+                if (errno == ECHILD) {
+                    // Nessun processo figlio rimasto - normale
+                    break;
+                } else if (errno != EINTR) {
+                    // Errore non gestibile
+                    break;
+                }
+            }
+        }
+        
+        if (timeout_count >= MAX_TIMEOUT) {
+            printf("Timeout raggiunto nel cleanup dei processi figli. Procedendo comunque...\n");
         }
     }
     

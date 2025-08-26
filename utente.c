@@ -530,9 +530,8 @@ int main(int argc, char *argv[])
                         }
                         break;
                     } else if (sig == SIGUSR2 || !shm_ptr->day_in_progress) {
-                        // Giornata terminata prima dell'arrivo
-                        printf("\t[UTENTE %d] Non sono riuscito ad arrivare in tempo (arrivo previsto: minuto %d). Torno a casa.\n", 
-                               user_id, arrival_minute);
+                        // DEBUG: Giornata terminata prima dell'arrivo
+                        //printf("\t[UTENTE %d] Non sono riuscito ad arrivare in tempo (arrivo previsto: minuto %d). Torno a casa.\n", user_id, arrival_minute);
                         increment_users_home_stats(service_id);
                         visited = 1;
                         break;
