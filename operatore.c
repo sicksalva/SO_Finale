@@ -111,6 +111,38 @@ int serve_customer(int assigned_counter)
         return 0; // Nessun utente da servire
     }
 
+    // Verifica probabilità di pausa PRIMA di servire l'utente
+    if (shm_ptr->total_pauses_simulation < NOF_PAUSE && (rand() % 100) < BREAK_PROBABILITY)
+    {
+        // Aggiorna la pausa se non ci sono utenti in coda
+        struct sembuf sem_pause_stats;
+        sem_pause_stats.sem_num = SEM_MUTEX;
+        sem_pause_stats.sem_op = -1; // Lock
+        sem_pause_stats.sem_flg = 0;
+
+        if (semop(semid, &sem_pause_stats, 1) == 0) {
+            // Ricontrolla dopo aver acquisito il mutex
+            if (shm_ptr->total_pauses_simulation < NOF_PAUSE) {
+                shm_ptr->operators[operator_id].total_pauses++;
+                shm_ptr->total_pauses_simulation++;
+                // Rilascia il mutex
+                sem_pause_stats.sem_op = 1; // Unlock
+                semop(semid, &sem_pause_stats, 1);
+
+                // Pausa avviata (DEBUG)
+                shm_ptr->operators[operator_id].status = OPERATOR_ON_BREAK;
+                // Libera lo sportello
+                shm_ptr->counters[assigned_counter].operator_pid = 0;
+                try_assign_available_operators();
+                return -1;
+            } else {
+                // Rilascia il mutex
+                sem_pause_stats.sem_op = 1; // Unlock
+                semop(semid, &sem_pause_stats, 1);
+            }
+        }
+    }
+
     // Semaforo SPECIFICO per il servizio (lock esclusivo su utente da servire)
     struct sembuf sem_lock;
     sem_lock.sem_num = SEM_SERVICE_LOCK(random_service);
@@ -191,57 +223,6 @@ int serve_customer(int assigned_counter)
             }
             
             return 0; // Non serviamo l'utente
-        }
-
-        // Verifica probabilità di pausa PRE-Servizio
-        if (shm_ptr->total_pauses_simulation < NOF_PAUSE && (rand() % 100) < BREAK_PROBABILITY)
-        {
-            // Aggiorna la pausa se non ci sono utenti in coda
-            struct sembuf sem_pause_stats;
-            sem_pause_stats.sem_num = SEM_MUTEX;
-            sem_pause_stats.sem_op = -1; // Lock
-            sem_pause_stats.sem_flg = 0;
-
-            if (semop(semid, &sem_pause_stats, 1) == 0) {
-                // Ricontrolla dopo aver acquisito il mutex
-                if (shm_ptr->total_pauses_simulation < NOF_PAUSE) {
-                    shm_ptr->operators[operator_id].total_pauses++;
-                    shm_ptr->total_pauses_simulation++;
-                    // Rilascia il mutex
-                    sem_pause_stats.sem_op = 1; // Unlock
-                    semop(semid, &sem_pause_stats, 1);
-
-                    // Riacquisisce il lock del servizio per rimettere il ticket
-                    struct sembuf sem_requeue;
-                    sem_requeue.sem_num = SEM_SERVICE_LOCK(random_service);
-                    sem_requeue.sem_op = -1;
-                    sem_requeue.sem_flg = 0;
-                    if (safe_semop(semid, &sem_requeue, 1) == 0) {
-                        // Rimette il ticket in coda
-                        int tail = shm_ptr->service_queue_tail[random_service];
-                        shm_ptr->service_queues[random_service][tail] = ticket_idx;
-                        shm_ptr->service_queue_tail[random_service] = (tail + 1) % MAX_SERVICE_QUEUE;
-                        shm_ptr->service_tickets_waiting[random_service]++;
-                        
-                        // Rilascia il lock del servizio
-                        sem_requeue.sem_op = 1;
-                        if (safe_semop(semid, &sem_requeue, 1) < 0) {
-                            perror("[OPERATORE] Errore nel rilascio del lock dopo aver rimesso il ticket in pausa");
-                        }
-                    }
-
-                    // Pausa avviata (DEBUG)
-                    shm_ptr->operators[operator_id].status = OPERATOR_ON_BREAK;
-                    // Libera lo sportello
-                    shm_ptr->counters[assigned_counter].operator_pid = 0;
-                    try_assign_available_operators();
-                    return -1;
-                } else {
-                    // Rilascia il mutex
-                    sem_pause_stats.sem_op = 1; // Unlock
-                    semop(semid, &sem_pause_stats, 1);
-                }
-            }
         }
 
         // Marca l'utente come in servizio da questo operatore
