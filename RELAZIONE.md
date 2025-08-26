@@ -181,11 +181,17 @@ All'inizio di ogni giornata, dopo aver ricevuto SIGUSR1 e superato la barriera s
 **Pianificazione Visita:**
 Se decide di visitare l'ufficio, l'utente seleziona casualmente il servizio desiderato e calcola un orario di arrivo aleatorio durante la giornata lavorativa. Questo simula realisticamente il fatto che gli utenti non arrivano tutti contemporaneamente all'apertura.
 
-**Attesa Arrivo:**
-L'utente entra in un loop di attesa attiva minimale, controllando periodicamente se è il momento di arrivare confrontando il tempo trascorso con l'orario pianificato. Prima dell'arrivo, verifica la disponibilità del servizio controllando se esistono sportelli attivi e operatori compatibili.
+**Programmazione Timer Preciso:**
+L'utente utilizza `timer_create()` con `CLOCK_MONOTONIC` per programmare un timer POSIX con precisione ai nanosecondi. L'orario di arrivo viene convertito da minuti simulati a nanosecondi reali utilizzando la proporzione temporale della simulazione, eliminando completamente l'attesa attiva e garantendo tempistiche precise.
+
+**Attesa Event-Driven:**
+Invece di controllare attivamente l'orario, l'utente si blocca su `sigtimedwait()` aspettando il segnale SIGALRM del timer programmato, SIGUSR2 (fine giornata) o SIGTERM (terminazione). Questo approccio è completamente event-driven e non consuma risorse CPU durante l'attesa.
+
+**Verifica Disponibilità Servizio:**
+Al momento dell'arrivo (ricezione di SIGALRM), l'utente verifica immediatamente la disponibilità del servizio richiesto controllando se esistono sportelli attivi e operatori compatibili. Se il servizio non è disponibile, l'utente decide di tornare a casa senza fare la coda, simulando un comportamento realistico di evitamento delle attese inutili.
 
 **Richiesta Ticket:**
-All'arrivo, l'utente acquisisce un slot nella memoria condivisa tramite il mutex SEM_MUTEX, inizializza una TicketRequest con i propri dati e timestamp preciso, e invia un messaggio TicketRequestMsg al processo ticket tramite `msgsnd()`.
+All'arrivo, se il servizio è disponibile, l'utente acquisisce un slot nella memoria condivisa tramite il mutex SEM_MUTEX, inizializza una TicketRequest con i propri dati e timestamp preciso, e invia un messaggio TicketRequestMsg al processo ticket tramite `msgsnd()`.
 
 **Attesa Elaborazione:**
 Dopo aver inviato la richiesta, l'utente usa `sigtimedwait()` per attendere la risposta del processo ticket, con timeout periodici per controllare lo stato nella memoria condivisa. Questo meccanismo è completamente event-driven e non sperpera risorse CPU.
@@ -205,8 +211,9 @@ Il progetto **SO_Finale** rappresenta un **laboratorio vivente** per esplorare i
 - **Gestione delle risorse** finite (sportelli, tempo, operatori)
 - **Comunicazione asincrona** tra processi indipendenti
 - **Robustezza** contro sovraccarichi e terminazioni impreviste
+- **Efficienza energetica** attraverso l'eliminazione completa dell'attesa attiva
 
-L'architettura dimostra come processi autonomi possano collaborare efficacemente attraverso meccanismi IPC, creando un sistema complesso ma deterministico che simula fedelmente le dinamiche di un ufficio postale reale.
+L'architettura dimostra come processi autonomi possano collaborare efficacemente attraverso meccanismi IPC, creando un sistema complesso ma deterministico che simula fedelmente le dinamiche di un ufficio postale reale. L'utilizzo di timer POSIX ad alta precisione e meccanismi event-driven garantisce che il sistema non sprechi risorse CPU, rendendolo scalabile ed efficiente anche con centinaia di processi utente simultanei.
 
 ---
 

@@ -1108,43 +1108,32 @@ int main(int argc, char *argv[])
         // -----------------------------------------------------------------
         printf("Simulazione giornata lavorativa %d (durata: %d secondi)...\n", day + 1, DAY_SIMULATION_TIME);
         
-        // Usiamo alarm per attendere esattamente DAY_SIMULATION_TIME
-        int elapsed_seconds = 0;
-        while (elapsed_seconds < DAY_SIMULATION_TIME) {
-
-            alarm_triggered = 0;
+        int elapsed_time_ms = 0;
+        const int check_interval_ms = 100; // Controllo ogni 100ms
+        const int total_time_ms = DAY_SIMULATION_TIME * 1000; // Converti secondi in millisecondi
+        
+        while (elapsed_time_ms < total_time_ms) {
+            // Usa nanosleep per attendere 100ms
+            struct timespec sleep_time;
+            sleep_time.tv_sec = 0;
+            sleep_time.tv_nsec = check_interval_ms * 1000000L; // 100ms in nanosecondi
             
-            // Configura un timer di alarm per un secondo
-            alarm(1);
+            nanosleep(&sleep_time, NULL);
             
-            // Prepara un set di segnali per l'attesa
-            sigset_t wait_mask;
-            sigfillset(&wait_mask);
-            sigdelset(&wait_mask, SIGALRM);
-            sigdelset(&wait_mask, SIGINT);  // Permetti anche Ctrl+C
-            sigdelset(&wait_mask, SIGTERM); // Permetti anche SIGTERM
+            elapsed_time_ms += check_interval_ms;
             
-            // Blocca tutti i segnali tranne quelli nel wait_mask
-            sigset_t orig_mask;
-            sigprocmask(SIG_SETMASK, &wait_mask, &orig_mask);
-            
-            while (!alarm_triggered) {
-                // Esci dall'attesa se arriva un segnale specifico
-                sigsuspend(&wait_mask);
-            }
-            sigprocmask(SIG_SETMASK, &orig_mask, NULL);
-            
-            // Incrementa il contatore e stampa lo stato
-            elapsed_seconds++;
-            if (elapsed_seconds % 1 == 0) {
+            // Stampa lo stato ogni secondo (ogni 10 cicli di 100ms)
+            if (elapsed_time_ms % 1000 == 0) {
+                int elapsed_seconds = elapsed_time_ms / 1000;
                 printf("Giorno %d: %d secondi passati\n", day + 1, elapsed_seconds);
             }
 
-            // Guarda se c'è una condizione di esplosione
+            // Controlla la condizione di esplosione ogni 100ms
             handle_explode_condition(shared_memory);
         }
         
-        printf("Giorno %d Completato dopo %d secondi.\n", day + 1, DAY_SIMULATION_TIME);
+        int final_seconds = elapsed_time_ms / 1000;
+        printf("Giorno %d Completato dopo %d secondi.\n", day + 1, final_seconds);
 
         // Notifica tutti i processi della fine della giornata
         printf("Notifying all users about day %d end...\n", day + 1);
